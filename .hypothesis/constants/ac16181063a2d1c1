@@ -1,0 +1,4 @@
+# file: /app/app/schemas/message.py
+# hypothesis_version: 6.151.8
+
+[5000, 'president', 'supervisor', 'teacher']

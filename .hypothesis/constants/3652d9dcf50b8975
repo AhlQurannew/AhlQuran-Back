@@ -1,0 +1,4 @@
+# file: /app/app/schemas/lecture.py
+# hypothesis_version: 6.151.8
+
+[200, 'List of teacher IDs', '^\\d{2}:\\d{2}$']

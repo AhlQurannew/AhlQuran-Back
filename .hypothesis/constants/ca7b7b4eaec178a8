@@ -1,0 +1,4 @@
+# file: /app/app/api/v1/routes/guardian.py
+# hypothesis_version: 6.151.8
+
+[100, '/', '/{guardian_id}', 'Email already exists', 'Guardian not found', 'first_name_ar', 'id', 'last_name_ar', 'password', 'student']

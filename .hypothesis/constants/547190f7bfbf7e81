@@ -1,0 +1,4 @@
+# file: /app/app/api/v1/routes/auth.py
+# hypothesis_version: 6.151.8
+
+['/admin/login', '/admin/me', '/guardian/login', '/me', '/president/login', '/president/register', '/supervisor/login', '/teacher/login', 'Bearer', 'WWW-Authenticate', 'access_token', 'admin', 'admin_id', 'bearer', 'email', 'first_name', 'firstname', 'guardian', 'guardian_id', 'id', 'isVerified', 'is_active', 'last_name', 'lastname', 'lax', 'message', 'phone_number', 'president', 'president logged in!', 'relationship', 'riwaya', 'role', 'school_name', 'sub', 'teacher', 'teacher_id', 'token_type', 'type', 'user', 'user_id', 'username']

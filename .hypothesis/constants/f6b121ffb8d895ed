@@ -1,0 +1,4 @@
+# file: /app/app/core/dependencies.py
+# hypothesis_version: 6.151.8
+
+['Admin not found', 'Authorization', 'Bearer', 'Bearer ', 'Invalid admin token', 'Not authenticated', 'User not found', 'WWW-Authenticate', 'access_token', 'admin', 'admin_id', 'role', 'user_id']

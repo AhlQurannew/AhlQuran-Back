@@ -1,0 +1,4 @@
+# file: /app/app/models/president.py
+# hypothesis_version: 6.151.8
+
+[100, 'Admin', 'CASCADE', 'SET NULL', 'User', 'admins.id', 'false', 'president', 'presidents', 'users.id']

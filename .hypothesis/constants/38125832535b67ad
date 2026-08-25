@@ -1,0 +1,4 @@
+# file: /app/app/models/guardian.py
+# hypothesis_version: 6.151.8
+
+[100, 255, 'CASCADE', 'President', 'SET NULL', 'Student', 'User', 'guardian', 'guardians', 'presidents.id', 'students.id', 'users.id']

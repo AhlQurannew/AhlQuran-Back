@@ -1,0 +1,4 @@
+# file: /app/app/models/message.py
+# hypothesis_version: 6.151.8
+
+[255, 'CASCADE', 'President', 'User', 'messages', 'president', 'presidents.id', 'supervisor', 'teacher', 'users.id']

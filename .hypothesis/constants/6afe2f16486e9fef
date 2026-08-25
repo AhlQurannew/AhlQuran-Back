@@ -1,0 +1,4 @@
+# file: /app/app/schemas/student_full.py
+# hypothesis_version: 6.151.8
+
+['academicLevel', 'accountType', 'dateOfBirth', 'fatherStatus', 'firstName', 'firstNameAr', 'firstNameEn', 'guardianAccountId', 'guardianContactId', 'guardianId', 'homeAddress', 'lastName', 'lastNameAr', 'lastNameEn', 'lectureId', 'lectureNameAr', 'lectureNameEn', 'motherStatus', 'phoneNumber', 'placeOfBirth', 'profileImage', 'schoolName']

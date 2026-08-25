@@ -1,0 +1,4 @@
+# file: /app/app/models/admin.py
+# hypothesis_version: 6.151.8
+
+['admin', 'admins']

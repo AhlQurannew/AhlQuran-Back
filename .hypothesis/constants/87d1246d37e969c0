@@ -1,0 +1,4 @@
+# file: /app/app/api/v1/routes/messages.py
+# hypothesis_version: 6.151.8
+
+[100, 403, '/', '/recent', '/{message_id}', 'PRESIDENT', 'SUPERVISOR', 'TEACHER']

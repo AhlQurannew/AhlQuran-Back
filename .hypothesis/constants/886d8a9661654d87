@@ -1,0 +1,4 @@
+# file: /app/app/models/teacher.py
+# hypothesis_version: 6.151.8
+
+[100, 'CASCADE', 'Lecture', 'President', 'User', 'lecture_teachers', 'presidents.id', 'teacher', 'teachers', 'users.id']

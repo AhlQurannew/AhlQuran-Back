@@ -1,0 +1,4 @@
+# file: /app/app/api/v1/routes/__init__.py
+# hypothesis_version: 6.151.8
+
+['/admin', '/auth', '/guardians', '/lectures', '/messages', '/president', '/students', '/supervisor', '/teacher', 'Admin', 'Authentication', 'Guardians', 'Lectures', 'Messages', 'President', 'Students', 'Supervisor', 'Teacher']

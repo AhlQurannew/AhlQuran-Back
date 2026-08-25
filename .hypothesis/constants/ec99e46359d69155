@@ -1,0 +1,4 @@
+# file: /app/app/schemas/auth.py
+# hypothesis_version: 6.151.8
+
+[100, '+1234567890', 'Doe', 'John', 'Login successful', 'access_token', 'bearer', 'email', 'example', 'firstname', 'id', 'is_active', 'lastname', 'message', 'password', 'phone_number', 'president', 'role', 'school_name', 'securePassword123', 'token_type', 'user']

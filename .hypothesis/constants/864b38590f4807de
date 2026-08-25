@@ -1,0 +1,4 @@
+# file: /app/app/api/v1/routes/president.py
+# hypothesis_version: 6.151.8
+
+[400, 403, '/register_student', '/register_supervisor', '/register_teacher', '/students', '/teachers', 'email', 'firstname', 'hire_date', 'id', 'is_active', 'lastname', 'message', 'riwaya', 'student', 'supervisor', 'user_id']

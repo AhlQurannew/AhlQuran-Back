@@ -1,0 +1,4 @@
+# file: /app/app/models/user.py
+# hypothesis_version: 6.151.8
+
+[255, 'GUARDIAN', 'Guardian', 'Guardian.user_id', 'PRESIDENT', 'President', 'STUDENT', 'SUPERVISOR', 'Student', 'Student.user_id', 'Supervisor', 'Supervisor.user_id', 'TEACHER', 'Teacher', 'Teacher.user_id', 'all, delete-orphan', 'user', 'users']

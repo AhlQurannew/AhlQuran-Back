@@ -1,0 +1,4 @@
+# file: /app/app/db/session.py
+# hypothesis_version: 6.151.8
+
+['jit', 'off', 'server_settings']

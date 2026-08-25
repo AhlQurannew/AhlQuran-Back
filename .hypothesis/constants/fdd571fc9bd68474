@@ -1,0 +1,4 @@
+# file: /app/app/api/v1/routes/admin.py
+# hypothesis_version: 6.151.8
+
+['/all-users', '/pending-presidents', 'User not found', 'created_at', 'email', 'firstname', 'id', 'is_active', 'lastname', 'message', 'pending_presidents', 'phone_number', 'role', 'school_name', 'total', 'user', 'users']

@@ -1,0 +1,4 @@
+# file: /app/app/models/session.py
+# hypothesis_version: 6.151.8
+
+[100, 200, 'SET NULL', 'SessionParticipation', 'User', 'all, delete-orphan', 'session', 'sessions', 'users.id']

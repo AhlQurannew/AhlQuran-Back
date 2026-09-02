@@ -1,0 +1,4 @@
+# file: /app/app/api/v1/routes/lectures.py
+# hypothesis_version: 6.151.8
+
+['/', '/special/lectures', '/{lecture_id}', 'category', 'circle_type', 'created_at', 'lecture_id', 'lecture_name_ar', 'lecture_name_en', 'schedules', 'shown_on_website', 'student_count', 'teachers', 'updated_at']

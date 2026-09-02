@@ -1,0 +1,45 @@
+# Flutter/Dart build outputs
+.dart_tool/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Test
+test/
+coverage/
+
+# Documentation
+*.md
+!README.md
+
+# Logs
+*.log
+
+# Android/iOS (if not needed in container)
+android/
+ios/
+linux/
+macos/
+windows/
+# web/ - KEEP THIS! Flutter needs it for web builds
+
+# Node modules (if any)
+node_modules/

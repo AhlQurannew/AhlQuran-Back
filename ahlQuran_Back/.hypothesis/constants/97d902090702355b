@@ -1,0 +1,4 @@
+# file: /app/app/api/v1/routes/supervisor.py
+# hypothesis_version: 6.151.8
+
+[100, '/', '/{supervisor_id}', 'email', 'firstname', 'lastname', 'password']

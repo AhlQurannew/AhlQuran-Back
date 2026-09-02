@@ -1,0 +1,4 @@
+# file: /app/app/db/init_db.py
+# hypothesis_version: 6.151.8
+
+['admin', 'admin123']

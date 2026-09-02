@@ -1,0 +1,4 @@
+# file: /app/app/core/security.py
+# hypothesis_version: 6.151.8
+
+['$2a$', '$2b$', '$2y$', 'HS256', 'access', 'auto', 'bcrypt', 'exp', 'iat', 'type']

@@ -1,0 +1,4 @@
+# file: /app/app/api/v1/routes/student.py
+# hypothesis_version: 6.151.8
+
+[100, '/', '/{student_id}', '/{student_id}/full', 'Active', 'Inactive', 'Student', 'email', 'firstname', 'golden', 'guardian_email', 'lastname', 'parent_name', 'parent_phone']

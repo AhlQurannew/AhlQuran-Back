@@ -1,0 +1,4 @@
+# file: /app/app/core/config.py
+# hypothesis_version: 6.151.8
+
+['.env', '/api/v1', 'HS256', 'ignore']

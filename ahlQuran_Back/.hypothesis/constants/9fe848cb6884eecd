@@ -1,0 +1,4 @@
+# file: /app/app/models/supervisor.py
+# hypothesis_version: 6.151.8
+
+['CASCADE', 'President', 'User', 'presidents.id', 'supervisor', 'supervisors', 'users.id']

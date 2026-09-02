@@ -1,0 +1,4 @@
+# file: /app/app/models/sessionParticipation.py
+# hypothesis_version: 6.151.8
+
+[100, 'CASCADE', 'Lecture', 'SET NULL', 'Session', 'Student', 'User', 'absent', 'excused', 'late', 'lectures.id', 'left_early', 'participations', 'present', 'sessions.id', 'students.id', 'users.id']

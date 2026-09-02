@@ -1,0 +1,20 @@
+# Alembic Migrations
+
+This directory contains migration scripts for managing the database schema of the school management system. 
+
+## Migration Scripts
+
+1. **env.py**: This file sets up the environment for Alembic to connect to the database and manage schema changes.
+
+2. **script.py.mako**: This is a template used by Alembic to generate migration scripts.
+
+3. **versions/**: This folder contains individual migration scripts:
+   - **001_initial_schema.py**: Creates the initial database schema, including tables for president, student, and teacher.
+   - **002_add_roles_and_permissions.py**: Adds roles (president, supervisor) and permissions to the database.
+   - **003_add_approval_system.py**: Implements the registration approval system for the president.
+
+## Usage
+
+To run migrations, use the Alembic command line interface. Ensure that your database connection is correctly configured in `alembic.ini`.
+
+For more detailed instructions on how to use Alembic, refer to the official Alembic documentation.

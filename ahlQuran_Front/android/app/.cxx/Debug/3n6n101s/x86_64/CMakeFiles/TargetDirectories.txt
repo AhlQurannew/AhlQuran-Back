@@ -1,0 +1,2 @@
+C:/Users/admin/Desktop/quran/The-Doctrine-of-the-People-of-the-Quran/android/app/.cxx/Debug/3n6n101s/x86_64/CMakeFiles/edit_cache.dir
+C:/Users/admin/Desktop/quran/The-Doctrine-of-the-People-of-the-Quran/android/app/.cxx/Debug/3n6n101s/x86_64/CMakeFiles/rebuild_cache.dir

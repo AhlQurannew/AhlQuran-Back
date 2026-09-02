@@ -1,0 +1,4 @@
+# file: /app/app/schemas/student.py
+# hypothesis_version: 6.151.8
+
+[255, '+1234567890', 'Doe', 'Jane Doe', 'John', 'guardian@example.com', 'john.doe@example.com', 'securepassword']

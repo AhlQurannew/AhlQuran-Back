@@ -1,0 +1,4 @@
+# file: /app/app/main.py
+# hypothesis_version: 6.151.8
+
+['*', '/', '1.0.0', 'message', 'version']

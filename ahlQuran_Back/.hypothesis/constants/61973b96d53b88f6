@@ -1,0 +1,4 @@
+# file: /app/app/models/lecture.py
+# hypothesis_version: 6.151.8
+
+[100, 200, 'CASCADE', 'Lecture', 'President', 'SessionParticipation', 'Teacher', 'WeeklySchedule', 'all, delete-orphan', 'lecture', 'lecture_id', 'lecture_teachers', 'lectures', 'lectures.id', 'presidents.id', 'schedules', 'teacher_id', 'teachers.id', 'weekly_schedules']

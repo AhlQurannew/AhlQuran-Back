@@ -1,0 +1,4 @@
+# file: /app/app/api/v1/routes/teacher.py
+# hypothesis_version: 6.151.8
+
+[100, '/', '/my-lectures', '/my-students', '/session_creation', '/{teacher_id}', '=', 'Active', 'Inactive', 'Student', 'detail', 'email', 'firstname', 'lastname', 'riwaya']

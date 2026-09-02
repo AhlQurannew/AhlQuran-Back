@@ -1,0 +1,4 @@
+# file: /app/app/models/acheivements.py
+# hypothesis_version: 6.151.8
+
+['CASCADE', 'President', 'Student', 'achievements', 'big', 'normal', 'presidents.id', 'small', 'students.id']

@@ -1,0 +1,4 @@
+# file: /app/app/models/teacher_attendance.py
+# hypothesis_version: 6.151.8
+
+['CASCADE', 'President', 'Teacher', 'absent', 'excused', 'late', 'present', 'presidents.id', 'teacher_attendances', 'teachers.id']

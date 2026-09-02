@@ -1,0 +1,63 @@
+GUARDIAN LOGIN CREDENTIALS
+==========================
+
+All guardians now have user accounts with GUARDIAN role and can log in to the mobile app.
+
+Default Password for All Guardians: guardian123
+
+Guardian Accounts:
+------------------
+
+1. Guardian ID: 1
+   Name: jakopa boswait
+   Email: abdoufourbadidud@gmail.com
+   Password: guardian123
+   Phone: 0554290994
+   Status: Active
+
+2. Guardian ID: 2
+   Name: farid ferguan
+   Email: faridFerg@gmail.com
+   Password: guardian123
+   Phone: 0555541829
+   Status: Active
+
+3. Guardian ID: 4
+   Name: brahim khadraoui
+   Email: brahimlabo@gmail.com
+   Password: guardian123
+   Phone: 0554290442
+   Status: Active
+
+4. Guardian ID: 5
+   Name: lanoub taroub
+   Email: lanoub12@gmail.com
+   Password: guardian123
+   Phone: 0442928834
+   Status: Active
+
+5. Guardian ID: 9 (Test Account)
+   Name: Test Guardian
+   Email: guardian@test.com
+   Password: password123
+   Phone: 1234567890
+   Status: Active
+
+Mobile App Configuration:
+-------------------------
+API Base URL: http://192.168.1.241:8000
+Endpoint: /api/v1/auth/guardian/login
+
+Testing:
+--------
+You can test any guardian login with:
+curl -X POST http://localhost:8000/api/v1/auth/guardian/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"faridFerg@gmail.com","password":"guardian123"}'
+
+Notes:
+------
+- All guardians have been updated from STUDENT role to GUARDIAN role
+- All accounts are active and can log in immediately
+- Passwords are securely hashed with bcrypt
+- Guardians should change their passwords after first login (feature to be implemented)

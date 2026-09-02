@@ -1,0 +1,4 @@
+# file: /app/app/models/student.py
+# hypothesis_version: 6.151.8
+
+[100, 255, 'Achievement', 'CASCADE', 'President', 'SessionParticipation', 'User', 'all, delete-orphan', 'presidents.id', 'student', 'students', 'users.id']

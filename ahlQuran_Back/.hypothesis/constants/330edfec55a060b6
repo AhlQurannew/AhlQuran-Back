@@ -1,0 +1,4 @@
+# file: /app/app/models/__init__.py
+# hypothesis_version: 6.151.8
+
+['Achievement', 'Admin', 'Guardian', 'Lecture', 'Message', 'ParticipationStatus', 'President', 'Session', 'SessionParticipation', 'Student', 'Supervisor', 'Teacher', 'User', 'UserRoleEnum', 'WeeklySchedule']

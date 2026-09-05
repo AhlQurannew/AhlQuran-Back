@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func, String, cast
 from sqlalchemy.orm import selectinload
-from datetime import datetime
+from datetime import datetime, date
 from app.db.session import get_db
 from app.core.security import get_password_hash
 
@@ -12,11 +12,21 @@ from app.models.teacher import Teacher
 from app.models.student import Student
 from app.models.guardian import Guardian
 from app.models.user import User, UserRoleEnum
+from app.models.attendance import Attendance
+from app.models.acheivements import Achievement
+from app.models.lecture import Lecture
+from app.models.sessionParticipation import SessionParticipation
 
 from app.schemas.teacher import TeacherCreate, TeacherResponse
 from app.schemas.student import StudentCreate, StudentResponse
 from app.schemas.supervisor import SupervisorCreate, SupervisorResponse
 from app.schemas.guardian import GuardianResponse, GuardianCreate
+from app.schemas.statistics import (
+    StatsSummaryResponse,
+    AttendanceRecordResponse,
+    MemorizationRecordResponse,
+    LectureDistributionResponse
+)
 from app.core.dependencies import require_president
 
 
@@ -218,3 +228,193 @@ async def get_students(
     )
     students = result.scalars().all()
     return students
+
+
+@presidentRouter.get("/statistics/summary", response_model=StatsSummaryResponse)
+async def get_statistics_summary(
+    db: AsyncSession = Depends(get_db),
+    current_president: User = Depends(require_president)
+):
+    """Get summary statistics for the president's school"""
+    president_id = await get_current_president_id(current_president, db)
+    
+    # Total students
+    total_students_result = await db.execute(
+        select(func.count(Student.id)).where(Student.president_id == president_id)
+    )
+    total_students = total_students_result.scalar() or 0
+    
+    # Total lectures
+    total_lectures_result = await db.execute(
+        select(func.count(Lecture.id)).where(Lecture.president_id == president_id)
+    )
+    total_lectures = total_lectures_result.scalar() or 0
+    
+    # Students present today - date is stored as string in DD-MM-YYYY format
+    today_str = datetime.now().strftime("%d-%m-%Y")
+    present_today_result = await db.execute(
+        select(func.count(func.distinct(Attendance.student_id)))
+        .join(Student, Attendance.student_id == Student.id)
+        .where(
+            Attendance.date == today_str,
+            cast(Attendance.status, String) == "present",
+            Student.president_id == president_id
+        )
+    )
+    present_today = present_today_result.scalar() or 0
+    
+    # Total pages memorized (sum of achievements)
+    total_pages_result = await db.execute(
+        select(func.sum(
+            (Achievement.to_surah * 20 + Achievement.to_verse) -
+            (Achievement.from_surah * 20 + Achievement.from_verse)
+        ))
+        .join(Student, Achievement.student_id == Student.id)
+        .where(Student.president_id == president_id)
+    )
+    total_pages = total_pages_result.scalar() or 0
+    
+    return {
+        "total_students": total_students,
+        "present_today": present_today,
+        "total_pages_memorized": max(0, int(total_pages / 15)),  # Rough estimate
+        "total_lectures": total_lectures
+    }
+
+
+@presidentRouter.get("/statistics/attendance-trend", response_model=list[AttendanceRecordResponse])
+async def get_attendance_trend(
+    limit: int = 10,
+    db: AsyncSession = Depends(get_db),
+    current_president: User = Depends(require_president)
+):
+    """Get attendance trend over recent days"""
+    president_id = await get_current_president_id(current_president, db)
+    
+    # Get unique dates with attendance records (date is string DD-MM-YYYY)
+    dates_result = await db.execute(
+        select(Attendance.date)
+        .join(Student, Attendance.student_id == Student.id)
+        .where(Student.president_id == president_id)
+        .distinct()
+        .order_by(Attendance.date.desc())
+        .limit(limit)
+    )
+    dates = [row[0] for row in dates_result.all()]
+    
+    attendance_data = []
+    for date_val in dates:
+        # Present count
+        present_result = await db.execute(
+            select(func.count(Attendance.id))
+            .join(Student, Attendance.student_id == Student.id)
+            .where(
+                Attendance.date == date_val,
+                cast(Attendance.status, String) == "present",
+                Student.president_id == president_id
+            )
+        )
+        present = present_result.scalar() or 0
+        
+        # Absent count
+        absent_result = await db.execute(
+            select(func.count(Attendance.id))
+            .join(Student, Attendance.student_id == Student.id)
+            .where(
+                Attendance.date == date_val,
+                cast(Attendance.status, String) == "absent",
+                Student.president_id == president_id
+            )
+        )
+        absent = absent_result.scalar() or 0
+        
+        total = present + absent
+        percentage = round((present / total * 100), 1) if total > 0 else 0
+        
+        attendance_data.append({
+            "date": date_val,
+            "present": present,
+            "absent": absent,
+            "total": total,
+            "percentage": f"{percentage}%"
+        })
+    
+    return attendance_data
+
+
+@presidentRouter.get("/statistics/top-memorizers", response_model=list[MemorizationRecordResponse])
+async def get_top_memorizers(
+    limit: int = 5,
+    db: AsyncSession = Depends(get_db),
+    current_president: User = Depends(require_president)
+):
+    """Get top students by memorization progress"""
+    president_id = await get_current_president_id(current_president, db)
+    
+    # Get students with their total achievement pages
+    result = await db.execute(
+        select(
+            Student,
+            User,
+            func.count(Achievement.id).label('total_achievements')
+        )
+        .join(User, Student.user_id == User.id)
+        .outerjoin(Achievement, Achievement.student_id == Student.id)
+        .where(Student.president_id == president_id)
+        .group_by(Student.id, User.id)
+        .order_by(func.count(Achievement.id).desc())
+        .limit(limit)
+    )
+    
+    students_data = result.all()
+    
+    return [
+        {
+            "student": f"{user.firstname} {user.lastname}",
+            "pages": count,
+            "rank": idx + 1
+        }
+        for idx, (student, user, count) in enumerate(students_data)
+    ]
+
+
+@presidentRouter.get("/statistics/lecture-distribution", response_model=list[LectureDistributionResponse])
+async def get_lecture_distribution(
+    db: AsyncSession = Depends(get_db),
+    current_president: User = Depends(require_president)
+):
+    """Get student distribution across lectures"""
+    president_id = await get_current_president_id(current_president, db)
+    
+    # Get total students for percentage calculation
+    total_students_result = await db.execute(
+        select(func.count(Student.id)).where(Student.president_id == president_id)
+    )
+    total_students = total_students_result.scalar() or 0
+    
+    if total_students == 0:
+        return []
+    
+    # Get lectures with student counts through SessionParticipation
+    result = await db.execute(
+        select(
+            Lecture.lecture_name_ar,
+            func.count(func.distinct(SessionParticipation.student_id)).label('student_count')
+        )
+        .select_from(Lecture)
+        .outerjoin(SessionParticipation, SessionParticipation.lecture_id == Lecture.id)
+        .where(Lecture.president_id == president_id)
+        .group_by(Lecture.id, Lecture.lecture_name_ar)
+        .order_by(func.count(func.distinct(SessionParticipation.student_id)).desc())
+    )
+    
+    lectures_data = result.all()
+    
+    return [
+        {
+            "className": lecture_name,
+            "students": count,
+            "percentage": f"{round(count / total_students * 100, 1)}%"
+        }
+        for lecture_name, count in lectures_data
+    ]

@@ -49,11 +49,11 @@ async def init_db():
         # Import all models to register them with Base
         import app.models
         
-        # Tables are created by Alembic migrations, not here
+        # Tables are created by SQL import
         # await create_tables()
         
-        # Create initial admin
-        await create_initial_admin()
+        # Admin is created by SQL import
+        # await create_initial_admin()
         
         logger.info("✅ Database initialization complete!")
         

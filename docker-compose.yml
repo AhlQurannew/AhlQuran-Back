@@ -1,0 +1,87 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: ahlquran-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ahlquran_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ahlquran_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-ahlquran_db}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - ahlquran-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ahlquran_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  migrate:
+    image: postgres:15-alpine
+    container_name: ahlquran-migrate
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ahlquran_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ahlquran_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-ahlquran_db}
+    command:
+      - sh
+      - -ec
+      - |
+        echo "Waiting for database to be ready..."
+        until pg_isready --host=db --port=5432 --username=$$POSTGRES_USER --dbname=$$POSTGRES_DB; do
+          sleep 2
+        done
+        
+        if PGPASSWORD=$$POSTGRES_PASSWORD psql --host=db --port=5432 --username=$$POSTGRES_USER --dbname=$$POSTGRES_DB -tAc "SELECT to_regclass('public.users') IS NOT NULL;" | grep -q t; then
+          echo "Database schema already present. Skipping bootstrap restore."
+        else
+          echo "Database schema missing. Bootstrapping from backup..."
+          PGPASSWORD=$$POSTGRES_PASSWORD psql --host=db --port=5432 --username=$$POSTGRES_USER --dbname=$$POSTGRES_DB --file=/backup/database_backup.sql
+          echo "Backup restore completed."
+        fi
+    volumes:
+      - ./database_backup.sql:/backup/database_backup.sql:ro
+    networks:
+      - ahlquran-network
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ahlquran-backend
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://ahlquran_user:ahlquran_pass@db:5432/ahlquran_db}
+      SECRET_KEY: ${SECRET_KEY:-ahlquran2024secretkeyprojectlaib}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      DEBUG: "true"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./app:/app/app
+    ports:
+      - "8000:8000"
+    networks:
+      - ahlquran-network
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  ahlquran-network:
+    driver: bridge

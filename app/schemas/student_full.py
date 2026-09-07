@@ -16,6 +16,7 @@ class PersonalInfo(BaseModel):
     nationality: Optional[str] = None
     father_status: Optional[str] = Field(None, alias="fatherStatus")
     mother_status: Optional[str] = Field(None, alias="motherStatus")
+    notes: Optional[str] = None
 
 class AccountInfo(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -65,4 +66,5 @@ class StudentCreateFull(BaseModel):
     guardian: GuardianInfo
     lectures: List[LectureInfo] = []
     formalEducationInfo: FormalEducationInfo
+    notes: Optional[str] = None
 

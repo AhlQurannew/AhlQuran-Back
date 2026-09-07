@@ -51,6 +51,7 @@ class Student(Base):
     school_name: Mapped[Optional[str]] = mapped_column(String(100))
     
     guardian_id: Mapped[Optional[int]] = mapped_column(Integer)
+    notes: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     
     # Many-to-Many relationship with Sessions through SessionParticipation
     participations: Mapped[List["SessionParticipation"]] = relationship(

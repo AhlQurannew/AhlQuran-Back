@@ -15,6 +15,7 @@ class PersonalInfo(BaseModel):
     nationality: Optional[str] = None
     fatherStatus: Optional[str] = None
     motherStatus: Optional[str] = None
+    notes: Optional[str] = None
 
 class AccountInfo(BaseModel):
     accountId: Optional[int] = None
@@ -81,6 +82,7 @@ class StudentUpdate(BaseModel):
     parent_phone: Optional[str] = Field(None, max_length=20)
     guardian_email: Optional[EmailStr] = None
     golden: Optional[bool] = None
+    notes: Optional[str] = None
 
 
 class StudentResponse(BaseModel):
@@ -109,6 +111,7 @@ class StudentResponse(BaseModel):
     guardian_email: Optional[str] = None
     golden: Optional[bool] = None
     is_active: Optional[bool] = None
+    notes: Optional[str] = None
 
     class Config:
         from_attributes = True

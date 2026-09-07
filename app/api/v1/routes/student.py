@@ -2,12 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-
+from typing import Optional
 from app.db.session import get_db
 from app.models.user import User, UserRoleEnum
 from app.models.student import Student
 from app.models.acheivements import Achievement
 from app.models.attendance import Attendance
+from app.models.lecture import Lecture
 from app.models.session import Session
 from app.models.sessionParticipation import SessionParticipation
 from app.schemas.student import (
@@ -348,6 +349,8 @@ async def update_student(
         student.user.email = update_data["email"]
 
     # Update student-specific fields
+    if "notes" in update_data:
+        student.notes = update_data["notes"]
     if "parent_name" in update_data:
         student.parent_name = update_data["parent_name"]
     if "parent_phone" in update_data:
@@ -447,6 +450,7 @@ async def update_student_full(
     student.academic_level = student_data.formalEducationInfo.academic_level
     student.grade = student_data.formalEducationInfo.grade
     student.school_name = student_data.formalEducationInfo.school_name
+    student.notes = student_data.personalInfo.notes or student_data.notes
 
     # Update Lectures (Session Participations)
     # Remove existing participations
@@ -514,144 +518,468 @@ async def delete_student(
 
 # ==================== ACHIEVEMENT OPERATIONS ====================
 
-@studentRouter.post("/{student_id}/achievements", response_model=AchievementResponse, status_code=status.HTTP_201_CREATED)
+# ============================================================
+# ACHIEVEMENT OPERATIONS
+# ============================================================
+
+
+@studentRouter.post(
+    "/{student_id}/achievements",
+    response_model=AchievementResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def add_achievement(
     student_id: int,
     achievement_data: AchievementCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user: User = Depends(
+        require_president_or_supervisor
+    ),
 ):
-    """Add an achievement/progress record for a student."""
+    """
+    Add a Quran memorization achievement
+    for a student and associate it with a lecture.
+    """
 
-    # Verify student exists
-    result = await db.execute(
-        select(Student).where(Student.id == student_id)
+    # ========================================================
+    # 1. Get president ID
+    # ========================================================
+
+    president_id = await get_president_id_for_user(
+        current_user,
+        db,
     )
+
+
+    # ========================================================
+    # 2. Verify student
+    # ========================================================
+
+    result = await db.execute(
+        select(Student).where(
+            Student.id == student_id,
+            Student.president_id == president_id,
+        )
+    )
+
     student = result.scalar_one_or_none()
 
+
     if not student:
+
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Student with ID {student_id} not found"
+            detail=(
+                f"Student with ID "
+                f"{student_id} not found"
+            ),
         )
 
-    # Validate achievement data belongs to the correct student
-    if achievement_data.student_id != student_id:
+
+    # ========================================================
+    # 3. Verify student_id if provided
+    if achievement_data.student_id is not None and achievement_data.student_id != student_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Student ID in URL must match student_id in request body"
+            detail="Student ID in URL must match student_id in request body",
         )
 
-    # Get president_id from current user (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
-    
-    # Create achievement record
+    # 4. Verify lecture if provided
+    if achievement_data.lecture_id is not None:
+        lecture_result = await db.execute(
+            select(Lecture).where(
+                Lecture.id == achievement_data.lecture_id,
+                Lecture.president_id == president_id,
+            )
+        )
+        lecture = lecture_result.scalar_one_or_none()
+        if not lecture:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Lecture with ID {achievement_data.lecture_id} not found",
+            )
+
+
+    # ========================================================
+    # 5. Create achievement
+    # ========================================================
+
     new_achievement = Achievement(
-        student_id=student_id,
-        president_id=president_id,
-        from_surah=achievement_data.from_surah,
-        to_surah=achievement_data.to_surah,
-        from_verse=achievement_data.from_verse,
-        to_verse=achievement_data.to_verse,
-        note=achievement_data.note,
-        achievement_type=achievement_data.achievement_type,
-        date=achievement_data.date
+
+        student_id=
+            student_id,
+
+        # ⭐⭐⭐ IMPORTANT ⭐⭐⭐
+        # This is what stores the selected
+        # lecture/halqa in PostgreSQL.
+
+        lecture_id=
+            achievement_data.lecture_id,
+
+        president_id=
+            president_id,
+
+        from_surah=
+            achievement_data.from_surah,
+
+        to_surah=
+            achievement_data.to_surah,
+
+        from_verse=
+            achievement_data.from_verse,
+
+        to_verse=
+            achievement_data.to_verse,
+
+        note=
+            achievement_data.note,
+
+        achievement_type=
+            achievement_data.achievement_type,
+
+        date=
+            achievement_data.date,
     )
 
-    db.add(new_achievement)
-    await db.commit()
-    await db.refresh(new_achievement)
 
-    logger.info(f"Achievement added for student {student_id} by user {current_user.id}")
+    # ========================================================
+    # 6. Save
+    # ========================================================
+
+    db.add(
+        new_achievement
+    )
+
+    await db.commit()
+
+    await db.refresh(
+        new_achievement
+    )
+
+
+    logger.info(
+        "Achievement added: "
+        f"id={new_achievement.id}, "
+        f"student_id={student_id}, "
+        f"lecture_id={achievement_data.lecture_id}, "
+        f"user_id={current_user.id}"
+    )
+
 
     return new_achievement
 
-
-@studentRouter.get("/{student_id}/achievements", response_model=AchievementList)
+@studentRouter.get(
+    "/{student_id}/achievements",
+    response_model=AchievementList,
+)
 async def get_student_achievements(
     student_id: int,
     skip: int = 0,
     limit: int = 100,
-    date: str = None,
+    date: Optional[str] = None,
+    lecture_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(
+        get_current_user
+    ),
 ):
-    """Get all achievements for a specific student, optionally filtered by date."""
+    """
+    Get achievements for a student.
 
-    # Verify student exists
-    result = await db.execute(
-        select(Student).where(Student.id == student_id)
+    Optional filters:
+    - date
+    - lecture_id
+    """
+
+    # ========================================================
+    # 1. President
+    # ========================================================
+
+    president_id = await get_president_id_for_user(
+        current_user,
+        db,
     )
+
+
+    # ========================================================
+    # 2. Verify student
+    # ========================================================
+
+    result = await db.execute(
+        select(Student).where(
+            Student.id == student_id,
+            Student.president_id == president_id,
+        )
+    )
+
     student = result.scalar_one_or_none()
 
+
     if not student:
+
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Student with ID {student_id} not found"
+            detail=(
+                f"Student with ID "
+                f"{student_id} not found"
+            ),
         )
 
-    # Build query with optional date filter
-    query = select(Achievement).where(Achievement.student_id == student_id)
-    
+
+    # ========================================================
+    # 3. Build query
+    # ========================================================
+
+    query = select(Achievement).where(
+
+        Achievement.student_id
+        == student_id,
+
+        Achievement.president_id
+        == president_id,
+    )
+
+
+    # ========================================================
+    # 4. Date filter
+    # ========================================================
+
     if date:
-        query = query.where(Achievement.date == date)
-    
-    # Get achievements
+
+        query = query.where(
+            Achievement.date == date
+        )
+
+
+    # ========================================================
+    # 5. Lecture filter
+    # ========================================================
+
+    if lecture_id is not None:
+
+        query = query.where(
+            Achievement.lecture_id
+            == lecture_id
+        )
+
+
+    # ========================================================
+    # 6. Get achievements
+    # ========================================================
+
     achievements_result = await db.execute(
+
         query
+        .order_by(
+            Achievement.created_at.desc()
+        )
         .offset(skip)
         .limit(limit)
-        .order_by(Achievement.created_at.desc())
     )
-    achievements = achievements_result.scalars().all()
 
-    # Get total count with same filter
-    count_query = select(Achievement).where(Achievement.student_id == student_id)
+
+    achievements = (
+        achievements_result
+        .scalars()
+        .all()
+    )
+
+
+    # ========================================================
+    # 7. Count
+    # ========================================================
+
+    count_query = select(
+        Achievement
+    ).where(
+
+        Achievement.student_id
+        == student_id,
+
+        Achievement.president_id
+        == president_id,
+    )
+
+
     if date:
-        count_query = count_query.where(Achievement.date == date)
-    
-    count_result = await db.execute(count_query)
-    total = len(count_result.scalars().all())
 
-    return AchievementList(achievements=list(achievements), total=total)
+        count_query = count_query.where(
+            Achievement.date == date
+        )
 
 
-@studentRouter.put("/{student_id}/achievements/{achievement_id}", response_model=AchievementResponse)
+    if lecture_id is not None:
+
+        count_query = count_query.where(
+            Achievement.lecture_id
+            == lecture_id
+        )
+
+
+    count_result = await db.execute(
+        count_query
+    )
+
+
+    total = len(
+        count_result
+        .scalars()
+        .all()
+    )
+
+
+    return AchievementList(
+        achievements=
+            list(achievements),
+
+        total=
+            total,
+    )
+
+@studentRouter.put(
+    "/{student_id}/achievements/{achievement_id}",
+    response_model=AchievementResponse,
+)
 async def update_achievement(
     student_id: int,
     achievement_id: int,
     achievement_data: AchievementUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user: User = Depends(
+        require_president_or_supervisor
+    ),
 ):
-    """Update an achievement record."""
+    """
+    Update an achievement.
+
+    The lecture can also be changed.
+    """
+
+    # ========================================================
+    # 1. President
+    # ========================================================
+
+    president_id = await get_president_id_for_user(
+        current_user,
+        db,
+    )
+
+
+    # ========================================================
+    # 2. Find achievement
+    # ========================================================
 
     result = await db.execute(
         select(Achievement).where(
-            Achievement.id == achievement_id,
-            Achievement.student_id == student_id
+
+            Achievement.id
+            == achievement_id,
+
+            Achievement.student_id
+            == student_id,
+
+            Achievement.president_id
+            == president_id,
         )
     )
-    achievement = result.scalar_one_or_none()
+
+    achievement = (
+        result
+        .scalar_one_or_none()
+    )
+
 
     if not achievement:
+
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Achievement with ID {achievement_id} not found for student {student_id}"
+            detail=(
+                f"Achievement with ID "
+                f"{achievement_id} not found"
+            ),
         )
 
-    # Update fields
-    update_data = achievement_data.model_dump(exclude_unset=True)
+
+    # ========================================================
+    # 3. If lecture_id is being changed,
+    #    verify that lecture exists
+    # ========================================================
+
+    if (
+        achievement_data.lecture_id
+        is not None
+    ):
+
+        lecture_result = await db.execute(
+            select(Lecture).where(
+
+                Lecture.id
+                == achievement_data.lecture_id,
+
+                Lecture.president_id
+                == president_id,
+            )
+        )
+
+        lecture = (
+            lecture_result
+            .scalar_one_or_none()
+        )
+
+
+        if not lecture:
+
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"Lecture with ID "
+                    f"{achievement_data.lecture_id} "
+                    f"not found"
+                ),
+            )
+
+
+    # ========================================================
+    # 4. Update fields
+    # ========================================================
+
+    update_data = (
+        achievement_data
+        .model_dump(
+            exclude_unset=True
+        )
+    )
+
+
     for field, value in update_data.items():
-        setattr(achievement, field, value)
+
+        setattr(
+            achievement,
+            field,
+            value,
+        )
+
+
+    # ========================================================
+    # 5. Save
+    # ========================================================
 
     await db.commit()
-    await db.refresh(achievement)
 
-    logger.info(f"Achievement {achievement_id} updated by user {current_user.id}")
+    await db.refresh(
+        achievement
+    )
+
+
+    logger.info(
+        "Achievement updated: "
+        f"id={achievement_id}, "
+        f"lecture_id={achievement.lecture_id}, "
+        f"user_id={current_user.id}"
+    )
+
 
     return achievement
-
 
 @studentRouter.delete("/{student_id}/achievements/{achievement_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_achievement(

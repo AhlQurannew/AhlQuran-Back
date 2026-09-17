@@ -207,3 +207,170 @@ async def deactivate_user(
             "is_active": user.is_active
         }
     }
+
+
+## School Management Endpoints
+
+@adminRouter.get("/schools")
+async def get_all_schools(
+    db: AsyncSession = Depends(get_db),
+    admin = Depends(require_admin)
+):
+    """
+    ADMIN ONLY: Get all schools with detailed president information.
+    """
+    from sqlalchemy import func as sql_func
+    from app.models.student import Student
+    
+    logger.info(f"[SCHOOLS] Admin requesting all schools")
+    
+    try:
+        # Get all approved presidents with their schools
+        result = await db.execute(
+            select(User)
+            .join(President, President.user_id == User.id)
+            .options(selectinload(User.president))
+            .where(User.role == UserRoleEnum.PRESIDENT)
+            .where(User.is_active == True)
+            .order_by(President.school_name)
+        )
+        presidents = result.scalars().all()
+        
+        logger.info(f"[SCHOOLS] Found {len(presidents)} approved presidents")
+        
+        schools_list = []
+        
+        for user in presidents:
+            # Get student count for this president
+            student_result = await db.execute(
+                select(sql_func.count(Student.id))
+                .where(Student.president_id == user.president.id)
+            )
+            student_count = student_result.scalar() or 0
+            
+            president_name = f"{user.firstname or ''} {user.lastname or ''}".strip() or "غير محدد"
+            
+            schools_list.append({
+                "id": user.president.id,
+                "user_id": user.id,
+                "school_name": user.president.school_name,
+                "president_name": president_name,
+                "email": user.email,
+                "phone_number": user.president.phone_number or "غير محدد",
+                "student_count": student_count,
+                "approval_date": user.president.approval_date.isoformat() if user.president.approval_date else None,
+                "created_at": user.president.created_at.isoformat() if user.president.created_at else None,
+                "is_active": user.is_active
+            })
+        
+        logger.info(f"[SCHOOLS] Returning {len(schools_list)} schools")
+        
+        return {
+            "total": len(schools_list),
+            "schools": schools_list
+        }
+    except Exception as e:
+        logger.error(f"[SCHOOLS] Error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching schools: {str(e)}"
+        )
+
+
+## Statistics Endpoints
+
+@adminRouter.get("/statistics/overview")
+async def get_admin_statistics(
+    db: AsyncSession = Depends(get_db),
+    admin = Depends(require_admin)
+):
+    """
+    ADMIN ONLY: Get overview statistics for admin dashboard.
+    """
+    from sqlalchemy import func as sql_func
+    from app.models.student import Student
+    
+    # Total approved presidents
+    result_approved = await db.execute(
+        select(User)
+        .where(User.role == UserRoleEnum.PRESIDENT)
+        .where(User.is_active == True)
+    )
+    total_presidents = len(result_approved.scalars().all())
+    
+    # Pending approval requests
+    result_pending = await db.execute(
+        select(User)
+        .where(User.role == UserRoleEnum.PRESIDENT)
+        .where(User.is_active == False)
+    )
+    pending_requests = len(result_pending.scalars().all())
+    
+    # Total unique schools
+    result_schools = await db.execute(
+        select(sql_func.count(sql_func.distinct(President.school_name)))
+        .join(User, President.user_id == User.id)
+        .where(User.role == UserRoleEnum.PRESIDENT)
+        .where(User.is_active == True)
+    )
+    total_schools = result_schools.scalar() or 0
+    
+    return {
+        "total_schools": total_schools,
+        "total_presidents": total_presidents,
+        "pending_requests": pending_requests,
+        "performance": None
+    }
+
+
+@adminRouter.get("/statistics/schools")
+async def get_schools_statistics(
+    db: AsyncSession = Depends(get_db),
+    admin = Depends(require_admin),
+    limit: int = 3
+):
+    """
+    ADMIN ONLY: Get schools with their student counts and percentages.
+    """
+    from sqlalchemy import func as sql_func
+    from app.models.student import Student
+    
+    # Get total student count
+    result_total = await db.execute(
+        select(sql_func.count(Student.id))
+    )
+    total_students = result_total.scalar() or 0
+    
+    # Get schools with student counts
+    result_schools = await db.execute(
+        select(
+            President.school_name,
+            User.firstname,
+            User.lastname,
+            sql_func.count(Student.id).label('student_count')
+        )
+        .join(User, President.user_id == User.id)
+        .outerjoin(Student, Student.president_id == President.id)
+        .where(User.is_active == True)
+        .group_by(President.id, President.school_name, User.firstname, User.lastname)
+        .order_by(sql_func.count(Student.id).desc())
+        .limit(limit)
+    )
+    
+    schools_list = []
+    for row in result_schools:
+        president_name = f"{row.firstname or ''} {row.lastname or ''}".strip()
+        student_count = row.student_count
+        percentage = (student_count / total_students * 100) if total_students > 0 else 0
+        
+        schools_list.append({
+            "school_name": row.school_name,
+            "student_count": student_count,
+            "president_name": president_name,
+            "percentage": round(percentage, 1)
+        })
+    
+    return {
+        "total_students": total_students,
+        "schools": schools_list
+    }

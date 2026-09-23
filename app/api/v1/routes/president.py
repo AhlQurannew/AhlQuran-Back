@@ -27,14 +27,43 @@ from app.schemas.statistics import (
     MemorizationRecordResponse,
     LectureDistributionResponse
 )
-from app.core.dependencies import require_president
+from app.core.dependencies import require_president, require_president_or_admin
 
 
 presidentRouter = APIRouter()
 
 
-async def get_current_president_id(current_user: User, db: AsyncSession) -> int:
-    """Helper function to get the president ID for the current user"""
+async def get_current_president_id(current_user, db: AsyncSession, school_id: int = None) -> int:
+    """
+    Helper function to get the president ID for the current user or admin viewing a school.
+    
+    Args:
+        current_user: Current authenticated user (President or Admin)
+        db: Database session
+        school_id: Optional school_id when admin is viewing a specific school
+    
+    Returns:
+        President ID
+    """
+    from app.models.admin import Admin
+    
+    # If admin is accessing and school_id is provided, return that school's president_id
+    if isinstance(current_user, Admin):
+        if school_id:
+            result = await db.execute(
+                select(President).where(President.id == school_id)
+            )
+            president = result.scalar_one_or_none()
+            if not president:
+                raise HTTPException(status_code=404, detail="School not found")
+            return president.id
+        else:
+            raise HTTPException(
+                status_code=400, 
+                detail="Admin must specify school_id parameter"
+            )
+    
+    # For president users, get their own president_id
     result = await db.execute(
         select(President).where(President.user_id == current_user.id)
     )
@@ -48,10 +77,15 @@ async def get_current_president_id(current_user: User, db: AsyncSession) -> int:
 async def add_supervisor(
         supervisor_data: SupervisorCreate,
         db: AsyncSession = Depends(get_db),
-        current_president: User = Depends(require_president),
+        current_user = Depends(require_president_or_admin),
+        school_id: int = None
 ):
-    # Get president ID
-    president_id = await get_current_president_id(current_president, db)
+    # Get president ID (handles both president and admin)
+    president_id = await get_current_president_id(current_user, db, school_id)
+    
+    # Get the user_id for created_by_id
+    from app.models.admin import Admin
+    created_by_user_id = current_user.id if not isinstance(current_user, Admin) else None
     
     # Check if email already exists
     existing_user = await db.execute(
@@ -75,7 +109,7 @@ async def add_supervisor(
     # Create Supervisor profile with president_id
     new_supervisor = Supervisor(
         user_id=new_user.id,
-        created_by_id=current_president.id,
+        created_by_id=created_by_user_id,
         president_id=president_id
     )
     db.add(new_supervisor)
@@ -91,10 +125,11 @@ async def add_supervisor(
 async def register_teacher(
     teacher_data: TeacherCreate,
     db: AsyncSession = Depends(get_db),
-    current_president: User = Depends(require_president)
+    current_user = Depends(require_president_or_admin),
+    school_id: int = None
 ):
-    # Get president ID
-    president_id = await get_current_president_id(current_president, db)
+    # Get president ID (handles both president and admin)
+    president_id = await get_current_president_id(current_user, db, school_id)
     
     # Check if email already exists
     existing_user = await db.execute(
@@ -142,10 +177,11 @@ async def register_teacher(
 async def register_student(
     student_data: StudentCreate,
     db: AsyncSession = Depends(get_db),
-    current_president: User = Depends(require_president)
+    current_user = Depends(require_president_or_admin),
+    school_id: int = None
 ):
-    # Get president ID
-    president_id = await get_current_president_id(current_president, db)
+    # Get president ID (handles both president and admin)
+    president_id = await get_current_president_id(current_user, db, school_id)
     
     # Check if email already exists
     existing_user = await db.execute(
@@ -187,10 +223,11 @@ async def register_student(
 @presidentRouter.get("/teachers", response_model=list[TeacherResponse])
 async def get_teachers(
     db: AsyncSession = Depends(get_db),
-    current_president: User = Depends(require_president)
+    current_user = Depends(require_president_or_admin),
+    school_id: int = None
 ):
-    # Get president ID
-    president_id = await get_current_president_id(current_president, db)
+    # Get president ID (handles both president and admin)
+    president_id = await get_current_president_id(current_user, db, school_id)
     
     # Filter teachers by president_id
     result = await db.execute(
@@ -217,10 +254,11 @@ async def get_teachers(
 @presidentRouter.get("/students", response_model=list[StudentResponse])
 async def get_students(
     db: AsyncSession = Depends(get_db),
-    current_president: User = Depends(require_president)
+    current_user = Depends(require_president_or_admin),
+    school_id: int = None
 ):
-    # Get president ID
-    president_id = await get_current_president_id(current_president, db)
+    # Get president ID (handles both president and admin)
+    president_id = await get_current_president_id(current_user, db, school_id)
     
     # Filter students by president_id
     result = await db.execute(
@@ -233,16 +271,23 @@ async def get_students(
 @presidentRouter.get("/statistics/summary", response_model=StatsSummaryResponse)
 async def get_statistics_summary(
     db: AsyncSession = Depends(get_db),
-    current_president: User = Depends(require_president)
+    current_user = Depends(require_president_or_admin),
+    school_id: int = None
 ):
     """Get summary statistics for the president's school"""
-    president_id = await get_current_president_id(current_president, db)
+    president_id = await get_current_president_id(current_user, db, school_id)
     
     # Total students
     total_students_result = await db.execute(
         select(func.count(Student.id)).where(Student.president_id == president_id)
     )
     total_students = total_students_result.scalar() or 0
+    
+    # Total teachers
+    total_teachers_result = await db.execute(
+        select(func.count(Teacher.id)).where(Teacher.president_id == president_id)
+    )
+    total_teachers = total_teachers_result.scalar() or 0
     
     # Total lectures
     total_lectures_result = await db.execute(
@@ -276,6 +321,7 @@ async def get_statistics_summary(
     
     return {
         "total_students": total_students,
+        "total_teachers": total_teachers,
         "present_today": present_today,
         "total_pages_memorized": max(0, int(total_pages / 15)),  # Rough estimate
         "total_lectures": total_lectures
@@ -286,10 +332,11 @@ async def get_statistics_summary(
 async def get_attendance_trend(
     limit: int = 10,
     db: AsyncSession = Depends(get_db),
-    current_president: User = Depends(require_president)
+    current_user = Depends(require_president_or_admin),
+    school_id: int = None
 ):
     """Get attendance trend over recent days"""
-    president_id = await get_current_president_id(current_president, db)
+    president_id = await get_current_president_id(current_user, db, school_id)
     
     # Get unique dates with attendance records (date is string DD-MM-YYYY)
     dates_result = await db.execute(
@@ -346,10 +393,11 @@ async def get_attendance_trend(
 async def get_top_memorizers(
     limit: int = 5,
     db: AsyncSession = Depends(get_db),
-    current_president: User = Depends(require_president)
+    current_user = Depends(require_president_or_admin),
+    school_id: int = None
 ):
     """Get top students by memorization progress"""
-    president_id = await get_current_president_id(current_president, db)
+    president_id = await get_current_president_id(current_user, db, school_id)
     
     # Get students with their total achievement pages
     result = await db.execute(
@@ -381,10 +429,11 @@ async def get_top_memorizers(
 @presidentRouter.get("/statistics/lecture-distribution", response_model=list[LectureDistributionResponse])
 async def get_lecture_distribution(
     db: AsyncSession = Depends(get_db),
-    current_president: User = Depends(require_president)
+    current_user = Depends(require_president_or_admin),
+    school_id: int = None
 ):
     """Get student distribution across lectures"""
-    president_id = await get_current_president_id(current_president, db)
+    president_id = await get_current_president_id(current_user, db, school_id)
     
     # Get total students for percentage calculation
     total_students_result = await db.execute(

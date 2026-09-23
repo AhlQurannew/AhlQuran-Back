@@ -18,7 +18,7 @@ from app.schemas.student import (
 from app.schemas.achievement import AchievementCreate, AchievementUpdate, AchievementResponse, AchievementList
 from app.schemas.attendance import AttendanceCreate, AttendanceUpdate, AttendanceResponse, AttendanceList
 from app.schemas.student_full import StudentCreateFull
-from app.core.dependencies import get_current_user, require_president_or_supervisor
+from app.core.dependencies import get_current_user, require_president_or_supervisor, require_president_or_admin
 from app.core.multi_tenancy import get_president_id_for_user
 from app.core.security import get_password_hash
 
@@ -134,10 +134,11 @@ def map_student_to_response(student: Student) -> StudentResponse:
 async def create_student(
     student_data: StudentCreateFull,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user = Depends(require_president_or_admin),
+    school_id: int = None
 ):
-    # Get president ID (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    # Get president ID (works for both presidents, supervisors, and admins)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     
     # Check if email already exists
     result = await db.execute(
@@ -237,12 +238,13 @@ async def list_students(
     limit: int = 100,
     lecture_id: int = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user = Depends(require_president_or_admin),
+    school_id: int = None
 ):
-    """Get all students. Optionally filter by lecture_id. Only presidents and supervisors can view all students."""
+    """Get all students. Optionally filter by lecture_id. Presidents, supervisors, and admins can view students."""
 
-    # Get president ID for filtering (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    # Get president ID for filtering (works for presidents, supervisors, and admins)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
 
     # Build query with president_id filter and optional lecture filter
     query = select(Student).options(

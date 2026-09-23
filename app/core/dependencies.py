@@ -205,3 +205,28 @@ async def require_guardian(
             detail="This action requires guardian privileges"
         )
     return current_user
+
+
+async def require_president_or_admin(
+    current_user = Depends(get_current_user)
+):
+    """
+    Dependency that allows both PRESIDENT and ADMIN access.
+    Admins have full read/write access to all schools.
+    """
+    from app.models.admin import Admin
+    
+    # If it's an Admin object, allow access
+    if isinstance(current_user, Admin):
+        logger.info(f"Admin {current_user.id} accessing president endpoint")
+        return current_user
+    
+    # If it's a User with PRESIDENT role, allow access
+    if hasattr(current_user, 'role') and current_user.role == UserRoleEnum.PRESIDENT:
+        logger.info(f"President {current_user.id} accessing endpoint")
+        return current_user
+    
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="This action requires president or administrator privileges"
+    )

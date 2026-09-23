@@ -5,7 +5,7 @@ from sqlalchemy.orm import joinedload
 from typing import List
 
 from app.db.session import get_db
-from app.core.dependencies import require_president_or_supervisor
+from app.core.dependencies import require_president_or_supervisor, require_president_or_admin
 from app.core.multi_tenancy import get_president_id_for_user
 from app.schemas.lecture import (
     LectureCreate,
@@ -26,13 +26,14 @@ lectureRouter = APIRouter()
 @lectureRouter.get("/", response_model=List[LectureResponse])
 async def get_lectures_basic(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user = Depends(require_president_or_admin),
+    school_id: int = None
 ):
     """
     Get basic list of lectures (for dropdowns, etc.)
     """
-    # Get president ID for filtering (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    # Get president ID for filtering (works for presidents, supervisors, and admins)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     
     result_query = await db.execute(
         select(Lecture).where(Lecture.president_id == president_id)
@@ -61,13 +62,14 @@ async def get_lectures_basic(
 @lectureRouter.get("/special/lectures", response_model=List[LectureResponse])
 async def get_all_lectures(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user = Depends(require_president_or_admin),
+    school_id: int = None
 ):
     """
     Get all lectures with full details including teachers, schedules, and student count
     """
-    # Get president ID for filtering (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    # Get president ID for filtering (works for presidents, supervisors, and admins)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     
     result_query = await db.execute(
         select(Lecture).options(
@@ -128,13 +130,14 @@ async def get_all_lectures(
 async def get_lecture_by_id(
     lecture_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user = Depends(require_president_or_admin),
+    school_id: int = None
 ):
     """
     Get a single lecture by ID with full details
     """
-    # Get president ID for filtering (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    # Get president ID for filtering (works for presidents, supervisors, and admins)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     
     result_query = await db.execute(
         select(Lecture).options(
@@ -197,13 +200,14 @@ async def get_lecture_by_id(
 async def create_lecture(
     lecture_data: LectureCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user = Depends(require_president_or_admin),
+    school_id: int = None
 ):
     """
     Create a new lecture with teachers and schedules
     """
-    # Get president ID (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    # Get president ID (works for presidents, supervisors, and admins)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     
     # Create the lecture with president_id
     new_lecture = Lecture(
@@ -289,7 +293,8 @@ async def update_lecture(
     lecture_id: int,
     lecture_data: LectureUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user = Depends(require_president_or_admin),
+    school_id: int = None
 ):
     """
     Update an existing lecture
@@ -396,7 +401,8 @@ async def update_lecture(
 async def delete_lecture(
     lecture_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user = Depends(require_president_or_admin),
+    school_id: int = None
 ):
     """
     Delete a lecture by ID

@@ -217,10 +217,13 @@ async def get_all_schools(
     admin = Depends(require_admin)
 ):
     """
-    ADMIN ONLY: Get all schools with detailed president information.
+    ADMIN ONLY: Get all schools with detailed president information and role counts.
     """
     from sqlalchemy import func as sql_func
     from app.models.student import Student
+    from app.models.teacher import Teacher
+    from app.models.supervisor import Supervisor
+    from app.models.guardian import Guardian
     
     logger.info(f"[SCHOOLS] Admin requesting all schools")
     
@@ -248,6 +251,27 @@ async def get_all_schools(
             )
             student_count = student_result.scalar() or 0
             
+            # Get teacher count for this president
+            teacher_result = await db.execute(
+                select(sql_func.count(Teacher.id))
+                .where(Teacher.president_id == user.president.id)
+            )
+            teacher_count = teacher_result.scalar() or 0
+            
+            # Get supervisor count for this president
+            supervisor_result = await db.execute(
+                select(sql_func.count(Supervisor.id))
+                .where(Supervisor.president_id == user.president.id)
+            )
+            supervisor_count = supervisor_result.scalar() or 0
+            
+            # Get guardian count for this president
+            guardian_result = await db.execute(
+                select(sql_func.count(Guardian.id))
+                .where(Guardian.president_id == user.president.id)
+            )
+            guardian_count = guardian_result.scalar() or 0
+            
             president_name = f"{user.firstname or ''} {user.lastname or ''}".strip() or "غير محدد"
             
             schools_list.append({
@@ -258,6 +282,10 @@ async def get_all_schools(
                 "email": user.email,
                 "phone_number": user.president.phone_number or "غير محدد",
                 "student_count": student_count,
+                "teacher_count": teacher_count,
+                "supervisor_count": supervisor_count,
+                "guardian_count": guardian_count,
+                "president_count": 1,  # Always 1 president per school
                 "approval_date": user.president.approval_date.isoformat() if user.president.approval_date else None,
                 "created_at": user.president.created_at.isoformat() if user.president.created_at else None,
                 "is_active": user.is_active
@@ -373,4 +401,42 @@ async def get_schools_statistics(
     return {
         "total_students": total_students,
         "schools": schools_list
+    }
+
+
+
+@adminRouter.get("/school/{school_id}/president")
+async def get_school_president(
+    school_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin = Depends(require_admin)
+):
+    """
+    ADMIN ONLY: Get president information for a specific school.
+    This allows admin to impersonate/view as that president.
+    """
+    result = await db.execute(
+        select(President, User)
+        .join(User, President.user_id == User.id)
+        .where(President.id == school_id)
+        .where(User.is_active == True)
+    )
+    
+    row = result.first()
+    
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found"
+        )
+    
+    president, user = row
+    
+    return {
+        "president_id": president.id,
+        "user_id": user.id,
+        "school_name": president.school_name,
+        "president_name": f"{user.firstname or ''} {user.lastname or ''}".strip(),
+        "email": user.email,
+        "phone_number": president.phone_number
     }

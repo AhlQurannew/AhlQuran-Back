@@ -7,7 +7,7 @@ from app.models.user import User, UserRoleEnum
 from app.models.teacher import Teacher
 from app.models.lecture import Lecture
 from app.schemas.teacher import TeacherCreate, TeacherUpdate, TeacherResponse, TeacherList
-from app.core.dependencies import require_president_or_supervisor, require_teacher
+from app.core.dependencies import require_president_or_supervisor, require_teacher, require_president_or_admin
 from app.core.security import get_password_hash
 from app.core.multi_tenancy import get_president_id_for_user
 import logging

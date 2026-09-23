@@ -13,19 +13,41 @@ from app.core.dependencies import get_current_user, get_db
 
 
 async def get_president_id_for_user(
-    current_user: User,
-    db: AsyncSession
+    current_user,
+    db: AsyncSession,
+    school_id: int = None
 ) -> int:
     """
-    Get the president_id for any user (president, supervisor, or teacher).
+    Get the president_id for any user (president, supervisor, teacher, or admin).
     
     - If user is a president: returns their president.id
     - If user is a supervisor: returns their supervisor.president_id
     - If user is a teacher: returns their teacher.president_id
+    - If user is an admin: returns the president_id from school_id parameter
     
     Raises HTTPException if unable to determine president_id.
     """
     from app.models.user import UserRoleEnum
+    from app.models.admin import Admin
+    
+    # Handle admin users
+    if isinstance(current_user, Admin):
+        if school_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Admin must provide school_id parameter"
+            )
+        # Validate that the school exists
+        result = await db.execute(
+            select(President).where(President.id == school_id)
+        )
+        president = result.scalar_one_or_none()
+        if not president:
+            raise HTTPException(
+                status_code=404,
+                detail="School not found"
+            )
+        return president.id
     
     if current_user.role == UserRoleEnum.PRESIDENT:
         result = await db.execute(

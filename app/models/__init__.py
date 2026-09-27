@@ -12,6 +12,8 @@ from app.models.sessionParticipation import SessionParticipation, ParticipationS
 from app.models.acheivements import Achievement
 from app.models.lecture import Lecture, WeeklySchedule
 from app.models.message import Message
+from app.models.attendance import Attendance, AttendanceStatus
+from app.models.teacher_attendance import TeacherAttendance
 
 __all__ = [
     "User",
@@ -29,4 +31,7 @@ __all__ = [
     "Lecture",
     "WeeklySchedule",
     "Message",
+    "Attendance",
+    "AttendanceStatus",
+    "TeacherAttendance",
 ]

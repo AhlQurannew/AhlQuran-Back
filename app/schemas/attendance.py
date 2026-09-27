@@ -21,7 +21,7 @@ class AttendanceBase(BaseModel):
 
 
 class AttendanceCreate(AttendanceBase):
-    student_id: int = Field(..., gt=0, example=1)
+    student_id: Optional[int] = Field(None, example=1)
 
 
 class AttendanceUpdate(BaseModel):

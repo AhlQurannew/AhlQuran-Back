@@ -49,11 +49,8 @@ async def init_db():
         # Import all models to register them with Base
         import app.models
         
-        # Tables are created by SQL import
-        # await create_tables()
-        
-        # Admin is created by SQL import
-        # await create_initial_admin()
+        # Ensure all registered tables (including attendances & teacher_attendances) exist
+        await create_tables()
         
         logger.info("✅ Database initialization complete!")
         

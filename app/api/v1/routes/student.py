@@ -18,7 +18,7 @@ from app.schemas.student import (
 from app.schemas.achievement import AchievementCreate, AchievementUpdate, AchievementResponse, AchievementList
 from app.schemas.attendance import AttendanceCreate, AttendanceUpdate, AttendanceResponse, AttendanceList
 from app.schemas.student_full import StudentCreateFull
-from app.core.dependencies import get_current_user, require_president_or_supervisor, require_president_or_admin
+from app.core.dependencies import get_current_user, require_president_or_supervisor, require_president_or_admin, require_teacher_or_above
 from app.core.multi_tenancy import get_president_id_for_user
 from app.core.security import get_password_hash
 
@@ -694,27 +694,31 @@ async def create_attendance(
     student_id: int,
     attendance_data: AttendanceCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user: User = Depends(require_teacher_or_above),
+    school_id: int = None
 ):
     """Create or update attendance record for a student on a specific date."""
 
-    # Get president_id for multi-tenancy
-    president_id = await get_president_id_for_user(current_user, db)
+    # Get president_id for multi-tenancy (handles admin case with school_id)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
 
-    # Verify student exists
+    # Verify student exists and belongs to the same president
     result = await db.execute(
-        select(Student).where(Student.id == student_id)
+        select(Student).where(
+            Student.id == student_id,
+            Student.president_id == president_id
+        )
     )
     student = result.scalar_one_or_none()
 
     if not student:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Student with ID {student_id} not found"
+            detail=f"Student with ID {student_id} not found or not accessible"
         )
 
-    # Validate attendance data belongs to the correct student
-    if attendance_data.student_id != student_id:
+    # Validate attendance data belongs to the correct student (if student_id provided)
+    if attendance_data.student_id is not None and attendance_data.student_id != student_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Student ID in URL must match student_id in request body"
@@ -764,24 +768,34 @@ async def get_student_attendance(
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    school_id: int = None
 ):
     """Get attendance records for a specific student. Optionally filter by date."""
 
-    # Verify student exists
+    # Get president_id for multi-tenancy (handles admin case with school_id)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
+
+    # Verify student exists and belongs to the same president
     result = await db.execute(
-        select(Student).where(Student.id == student_id)
+        select(Student).where(
+            Student.id == student_id,
+            Student.president_id == president_id
+        )
     )
     student = result.scalar_one_or_none()
 
     if not student:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Student with ID {student_id} not found"
+            detail=f"Student with ID {student_id} not found or not accessible"
         )
 
-    # Build query
-    query = select(Attendance).where(Attendance.student_id == student_id)
+    # Build query with president_id filter for multi-tenancy
+    query = select(Attendance).where(
+        Attendance.student_id == student_id,
+        Attendance.president_id == president_id
+    )
     
     # Filter by date if provided
     if date:
@@ -793,8 +807,11 @@ async def get_student_attendance(
     attendance_result = await db.execute(query)
     attendances = attendance_result.scalars().all()
 
-    # Get total count
-    count_query = select(Attendance).where(Attendance.student_id == student_id)
+    # Get total count with president_id filter
+    count_query = select(Attendance).where(
+        Attendance.student_id == student_id,
+        Attendance.president_id == president_id
+    )
     if date:
         count_query = count_query.where(Attendance.date == date)
     
@@ -810,14 +827,19 @@ async def update_attendance(
     attendance_id: int,
     attendance_data: AttendanceUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user: User = Depends(require_teacher_or_above),
+    school_id: int = None
 ):
     """Update an attendance record."""
+
+    # Get president_id for multi-tenancy
+    president_id = await get_president_id_for_user(current_user, db, school_id)
 
     result = await db.execute(
         select(Attendance).where(
             Attendance.id == attendance_id,
-            Attendance.student_id == student_id
+            Attendance.student_id == student_id,
+            Attendance.president_id == president_id
         )
     )
     attendance = result.scalar_one_or_none()
@@ -846,14 +868,19 @@ async def delete_attendance(
     student_id: int,
     attendance_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user: User = Depends(require_teacher_or_above),
+    school_id: int = None
 ):
     """Delete an attendance record."""
+
+    # Get president_id for multi-tenancy
+    president_id = await get_president_id_for_user(current_user, db, school_id)
 
     result = await db.execute(
         select(Attendance).where(
             Attendance.id == attendance_id,
-            Attendance.student_id == student_id
+            Attendance.student_id == student_id,
+            Attendance.president_id == president_id
         )
     )
     attendance = result.scalar_one_or_none()

@@ -876,7 +876,7 @@ COPY public.admins (id, "user", password, role, created_by_id, created_at) FROM 
 --
 
 COPY public.alembic_version (version_num) FROM stdin;
-488ac1eb15d4
+001
 \.
 
 

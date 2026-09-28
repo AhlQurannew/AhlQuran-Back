@@ -154,7 +154,7 @@ async def register_teacher(
     new_teacher = Teacher(
         user_id=new_user.id,
         riwaya=teacher_data.riwaya,
-        created_by_id=current_president.id,
+        created_by_id=current_user.id,
         president_id=president_id
     )
     db.add(new_teacher)
@@ -208,7 +208,7 @@ async def register_student(
         parent_name=student_data.parent_name,
         parent_phone=student_data.parent_phone,
         guardian_email=student_data.guardian_email,
-        created_by_id=current_president.id,
+        created_by_id=current_user.id,
         president_id=president_id
     )
     db.add(new_student)

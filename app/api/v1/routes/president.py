@@ -99,7 +99,7 @@ async def add_supervisor(
         firstname=supervisor_data.firstname,
         lastname=supervisor_data.lastname,
         email=supervisor_data.email,
-        hashed_password=supervisor_data.password,
+        hashed_password=get_password_hash(supervisor_data.password),
         role=UserRoleEnum.SUPERVISOR,
         is_active=True
     )
@@ -115,10 +115,16 @@ async def add_supervisor(
     db.add(new_supervisor)
     await db.commit()
     await db.refresh(new_supervisor)
+    await db.refresh(new_user)
 
     return {
-        "message": "Supervisor registered successfully",
-        "supervisor": new_supervisor
+        "id": new_supervisor.id,
+        "user_id": new_supervisor.user_id,
+        "firstname": new_user.firstname,
+        "lastname": new_user.lastname,
+        "email": new_user.email,
+        "is_active": new_user.is_active,
+        "created_at": new_supervisor.created_at
     }
 
 @presidentRouter.post("/register_teacher", response_model=TeacherResponse)
@@ -195,7 +201,7 @@ async def register_student(
         firstname=student_data.firstname,
         lastname=student_data.lastname,
         email=student_data.email,
-        hashed_password=student_data.password,
+        hashed_password=get_password_hash(student_data.password),
         role=UserRoleEnum.STUDENT,
         is_active=True
     )
@@ -289,6 +295,12 @@ async def get_statistics_summary(
     )
     total_teachers = total_teachers_result.scalar() or 0
     
+    # Total supervisors
+    total_supervisors_result = await db.execute(
+        select(func.count(Supervisor.id)).where(Supervisor.president_id == president_id)
+    )
+    total_supervisors = total_supervisors_result.scalar() or 0
+    
     # Total lectures
     total_lectures_result = await db.execute(
         select(func.count(Lecture.id)).where(Lecture.president_id == president_id)
@@ -322,6 +334,7 @@ async def get_statistics_summary(
     return {
         "total_students": total_students,
         "total_teachers": total_teachers,
+        "total_supervisors": total_supervisors,
         "present_today": present_today,
         "total_pages_memorized": max(0, int(total_pages / 15)),  # Rough estimate
         "total_lectures": total_lectures

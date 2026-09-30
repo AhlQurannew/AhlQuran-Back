@@ -6,6 +6,7 @@ class StatsSummaryResponse(BaseModel):
     """Summary statistics response"""
     total_students: int = Field(..., description="Total number of students")
     total_teachers: int = Field(default=0, description="Total number of teachers")
+    total_supervisors: int = Field(default=0, description="Total number of supervisors")
     present_today: int = Field(..., description="Number of students present today")
     total_pages_memorized: int = Field(..., description="Total pages memorized by all students")
     total_lectures: int = Field(..., description="Total number of lectures/circles")

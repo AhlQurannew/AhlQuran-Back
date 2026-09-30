@@ -9,6 +9,7 @@ from .student import studentRouter
 from .lectures import lectureRouter
 from .guardian import guardianRouter
 from .messages import messageRouter
+from .ws_messages import ws_router
 
 def register_routes(app):
     routes = [
@@ -29,3 +30,6 @@ def register_routes(app):
             prefix=f"{settings.API_V1_PREFIX}{prefix}",
             tags=tags
         )
+
+    # Register WebSocket router directly on app
+    app.include_router(ws_router, tags=["WebSocket"])

@@ -1,542 +1,209 @@
-# 🕌 Ahl Quran Backend
+# AhlQuran Backend
 
-A modern, containerized FastAPI backend system for managing Quranic education institutions. Fully dockerized - **no Python or PostgreSQL installation required!**
+FastAPI backend for Ahl El Quran School Management System.
 
----
-
-## 📋 Table of Contents
-
-- [What You Need](#-what-you-need)
-- [Quick Start (5 Minutes)](#-quick-start-5-minutes)
-- [What This Application Does](#-what-this-application-does)
-- [API Documentation](#-api-documentation)
-- [User Roles](#-user-roles)
-- [Common Commands](#-common-commands)
-- [Troubleshooting](#-troubleshooting)
-
----
-
-## 🎯 What You Need
-
-**Only Docker is required!** No need to install Python, PostgreSQL, or any other dependencies.
-
-### Install Docker Desktop
-
-Choose your operating system:
-
-- **Windows**: [Download Docker Desktop for Windows](https://www.docker.com/products/docker-desktop)
-- **Mac**: [Download Docker Desktop for Mac](https://www.docker.com/products/docker-desktop)
-- **Linux**:
-  ```bash
-  curl -fsSL https://get.docker.com -o get-docker.sh
-  sudo sh get-docker.sh
-  sudo apt-get install docker-compose-plugin
-  ```
-
-> **Verify Installation**: Open a terminal and run `docker --version`
-
----
-
-## 🚀 Quick Start (5 Minutes)
-
-### Step 1: Get the Code
+## Quick Start
 
 ```bash
-git clone <your-repository-url>
-cd ahl_quran_backend
-```
-
-### Step 2: Configure Environment
-
-Copy the example environment file and customize it:
-
-```bash
-cp .env.example .env
-```
-
-**Windows PowerShell:**
-```powershell
-Copy-Item .env.example .env
-```
-
-Edit `.env` file with your preferred text editor and change these values:
-
-```dotenv
-POSTGRES_USER=your_username
-POSTGRES_PASSWORD=your_secure_password
-POSTGRES_DB=ahl_quran_db
-SECRET_KEY=generate_a_secure_key_here
-```
-
-> **🔐 Generate a Secure Secret Key:**
-> ```bash
-> python -c "import secrets; print(secrets.token_hex(32))"
-> ```
-> Or use an online generator: https://randomkeygen.com/
-
-### Step 3: Start the Application
-
-```bash
-docker-compose up --build
-```
-
-**What happens:**
-- ✅ Downloads necessary Docker images (first time only)
-- ✅ Starts PostgreSQL database
-- ✅ Waits for database to be ready
-- ✅ Starts FastAPI application
-- ✅ Application available at http://localhost:8000
-
-**You'll see logs like:**
-```
-db_1   | database system is ready to accept connections
-web_1  | INFO:     Application startup complete.
-web_1  | INFO:     Uvicorn running on http://0.0.0.0:8000
-```
-
-> **Note**: First run takes 2-3 minutes to download images. Subsequent runs are instant!
-
-### Step 4: Run Database Migrations
-
-Open a **new terminal** (keep the first one running) and run:
-
-**On Windows:**
-```cmd
-cd ahlQuran_Back
-run_migrations.bat
-```
-
-**On Linux/Mac:**
-```bash
-cd ahlQuran_Back
-chmod +x run_migrations.sh
-./run_migrations.sh
-```
-
-This applies all database schema changes. See [MIGRATIONS.md](MIGRATIONS.md) for more details.
-
-### Step 5: Create Your Admin Account
-
-```bash
-docker-compose exec web python -m app.Cli.admin
-```
-
-Follow the prompts:
-```
-Enter admin username: admin
-Enter admin password: YourSecurePassword123
-Admin user 'admin' created successfully!
-```
-
-### Step 6: Access the Application
-
-🎉 **You're ready!**
-
-- **Interactive API Docs**: http://localhost:8000/docs
-- **API Base URL**: http://localhost:8000/api/v1
-- **Alternative Docs**: http://localhost:8000/redoc
-
----
-
-## 💡 What This Application Does
-
-### Core Features
-
-- **👤 User Management**: Manage admins, presidents, supervisors, teachers, and students
-- **🔐 Authentication**: Secure JWT-based login system
-- **📚 Session Tracking**: Record and track Quranic learning sessions
-- **🏆 Achievements**: Monitor student progress and achievements
-- **🎓 Role-Based Access**: Different permissions for different user types
-- **📊 Reports**: Generate reports on student performance
-
-### Technology Stack
-
-| Component | Technology |
-|-----------|------------|
-| **Backend Framework** | FastAPI (Python 3.11) |
-| **Database** | PostgreSQL 15 |
-| **Authentication** | JWT with bcrypt |
-| **ORM** | SQLAlchemy 2.0 (Async) |
-| **Containerization** | Docker + Docker Compose |
-| **API Documentation** | Swagger/OpenAPI |
-
----
-
-## 📚 API Documentation
-
-### Getting Started with the API
-
-1. **Open Interactive Docs**: http://localhost:8000/docs
-
-2. **Login to Get Token**:
-   - Click on `POST /api/v1/auth/admin/login`
-   - Click "Try it out"
-   - Enter your credentials:
-     ```json
-     {
-       "user": "admin",
-       "password": "YourSecurePassword123"
-     }
-     ```
-   - Click "Execute"
-   - Copy the `access_token` from the response
-
-3. **Authorize**:
-   - Click the 🔒 "Authorize" button at the top
-   - Enter: `Bearer <your_access_token>`
-   - Click "Authorize"
-
-4. **Use Protected Endpoints**:
-   - Now you can test any endpoint!
-
-### Example API Calls
-
-#### Login
-```bash
-POST http://localhost:8000/api/v1/auth/admin/login
-Content-Type: application/json
-
-{
-  "user": "admin",
-  "password": "YourSecurePassword123"
-}
-```
-
-#### Create a President
-```bash
-POST http://localhost:8000/api/v1/admin/presidents
-Authorization: Bearer <your_token>
-Content-Type: application/json
-
-{
-  "firstname": "Ahmed",
-  "lastname": "Hassan",
-  "email": "ahmed@example.com",
-  "password": "SecurePass123",
-  "school_name": "Al-Noor Academy",
-  "phone_number": "+1234567890"
-}
-```
-
-#### Create a Teacher
-```bash
-POST http://localhost:8000/api/v1/teachers
-Authorization: Bearer <your_token>
-Content-Type: application/json
-
-{
-  "firstname": "Fatima",
-  "lastname": "Ali",
-  "email": "fatima@example.com",
-  "password": "TeacherPass123",
-  "riwaya": "Hafs"
-}
-`` create a supervisor
-{
-  "email": "amine@gmail.com",
-  "password": "amineamine12",
-  "firstname": "amine",
-  "lastname": "youcef"
-}
----
-
-## 👥 User Roles
-
-### Role Hierarchy
-
-```
-Admin (System Administrator)
-  ├── Can manage Presidents
-  │
-  └── President (School/Institution Head)
-      ├── Can manage Supervisors, Teachers, Students
-      │
-      └── Supervisor
-          ├── Can manage Teachers, Students
-          │
-          └── Teacher
-              ├── Can manage Students
-              │
-              └── Student
-```
-
-### Permissions
-
-| Role | Create | Manage | Access |
-|------|--------|--------|--------|
-| **Admin** | Presidents | All users | Full system access |
-| **President** | Supervisors, Teachers, Students | Own hierarchy | Institution management |
-| **Supervisor** | Teachers, Students | Assigned users | Section management |
-| **Teacher** | - | Assigned students | Teaching & sessions |
-| **Student** | - | Own profile | Personal data |
-
----
-
-## 🛠 Common Commands
-
-### Starting & Stopping
-
-```bash
-# Start application (normal mode)
-docker-compose up
-
-# Start in background (detached mode)
+# Start all services (database + backend)
 docker-compose up -d
 
-# Stop application
+# View logs
+docker-compose logs -f backend
+
+# Stop services
 docker-compose down
-
-# Stop and remove all data (⚠️ DELETES DATABASE)
-docker-compose down -v
 ```
 
-### Viewing Logs
+The backend will be available at `http://localhost:8000`
+
+## What Happens on Startup
+
+1. **Database starts** and waits for health check
+2. **Backend container starts** and runs the startup script:
+   - Waits for database to be ready
+   - Runs all pending Alembic migrations automatically (`alembic upgrade head`)
+   - Starts the FastAPI application
+
+**Migrations run automatically** - you don't need to do anything!
+
+## Database Migrations
+
+This project uses **Alembic** for database schema migrations.
+
+### Automatic Migration on Startup
+
+✅ **Migrations run automatically every time the backend container starts**
+
+The startup script (`scripts/startup.sh`) ensures:
+- Database is ready before connecting
+- All pending migrations are applied before the app starts
+- Application only starts if migrations succeed
+
+### Creating New Migrations
+
+When you need to change the database schema:
 
 ```bash
-# View all logs
-docker-compose logs -f
+# 1. Make changes to your SQLAlchemy models in app/models/
 
-# View only web application logs
-docker-compose logs -f web
+# 2. Create a new migration
+docker-compose exec backend alembic revision -m "description_of_change"
 
-# View only database logs
-docker-compose logs -f db
+# 3. Edit the generated file in alembic/versions/
+# Implement upgrade() and downgrade() functions
+
+# 4. Restart backend to apply
+docker-compose restart backend
 ```
 
-### Database Operations
+The migration will be automatically applied on restart.
+
+### Manual Migration Commands
 
 ```bash
-# Run migrations (after code changes)
-docker-compose exec web alembic upgrade head
-
-# Rollback last migration
-docker-compose exec web alembic downgrade -1
+# Check current migration version
+docker-compose exec backend alembic current
 
 # View migration history
-docker-compose exec web alembic history
+docker-compose exec backend alembic history
 
-# Access PostgreSQL database directly
-docker-compose exec db psql -U postgres -d ahl_quran
+# Manually run migrations (usually not needed)
+docker-compose exec backend alembic upgrade head
+
+# Rollback one migration
+docker-compose exec backend alembic downgrade -1
 ```
 
-### Container Management
+See [MIGRATIONS.md](MIGRATIONS.md) for detailed migration documentation.
+
+## Development
+
+### Environment Variables
+
+Create a `.env` file (optional - defaults are provided):
+
+```env
+POSTGRES_USER=ahlquran_user
+POSTGRES_PASSWORD=ahlquran_pass
+POSTGRES_DB=ahlquran_db
+DATABASE_URL=postgresql+asyncpg://ahlquran_user:ahlquran_pass@db:5432/ahlquran_db
+SECRET_KEY=your-secret-key-here
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+```
+
+### Hot Reload
+
+The backend runs with `--reload` flag in development, so code changes are automatically reflected.
+
+### Database Access
 
 ```bash
-# View running containers
-docker-compose ps
+# Connect to PostgreSQL
+docker-compose exec db psql -U ahlquran_user -d ahlquran_db
 
-# Restart specific service
-docker-compose restart web
+# View tables
+\dt
 
-# Rebuild after code changes
-docker-compose up --build
-
-# Access container shell
-docker-compose exec web bash
-
-# Run Python commands
-docker-compose exec web python -m app.Cli.admin
+# Query data
+SELECT * FROM users;
 ```
 
----
+## Project Structure
 
-## 🐛 Troubleshooting
-
-### Problem: Port 8000 is already in use
-
-**Error:**
 ```
-Error starting userland proxy: listen tcp4 0.0.0.0:8000: bind: address already in use
-```
-
-**Solution 1: Stop the conflicting process**
-
-**Windows:**
-```powershell
-netstat -ano | findstr :8000
-taskkill /PID <PID_NUMBER> /F
-```
-
-**Mac/Linux:**
-```bash
-lsof -ti:8000 | xargs kill -9
+AhlQuran-Back/
+├── alembic/              # Database migrations
+│   └── versions/         # Migration files
+├── app/
+│   ├── api/              # API routes
+│   │   └── v1/
+│   │       └── routes/   # Endpoint definitions
+│   ├── core/             # Security, config
+│   ├── db/               # Database setup
+│   ├── models/           # SQLAlchemy models
+│   └── schemas/          # Pydantic schemas
+├── scripts/
+│   └── startup.sh        # Container startup script
+├── alembic.ini           # Alembic configuration
+├── docker-compose.yml    # Service orchestration
+├── Dockerfile            # Backend container image
+└── requirements.txt      # Python dependencies
 ```
 
-**Solution 2: Change the port**
+## API Documentation
 
-Edit `docker-compose.yml`:
-```yaml
-web:
-  ports:
-    - "8001:8000"  # Use port 8001 instead
-```
+When the backend is running, visit:
+- **Swagger UI**: http://localhost:8000/docs
+- **ReDoc**: http://localhost:8000/redoc
 
-Then access: http://localhost:8001
+## Troubleshooting
 
----
-
-### Problem: Database connection refused
-
-**Error:**
-```
-sqlalchemy.exc.OperationalError: connection refused
-```
-
-**Solution:**
+### Backend won't start
 
 ```bash
-# Check if database is running
+# Check logs
+docker-compose logs backend
+
+# Common issue: Migration failed
+# Fix the migration and restart
+docker-compose restart backend
+```
+
+### Database connection issues
+
+```bash
+# Ensure database is healthy
 docker-compose ps
 
 # Restart database
 docker-compose restart db
-
-# View database logs
-docker-compose logs db
-
-# If still failing, recreate everything
-docker-compose down
-docker-compose up --build
 ```
 
----
-
-### Problem: Migration errors
-
-**Error:**
-```
-Target database is not up to date
-```
-
-**Solution:**
+### Reset everything
 
 ```bash
-# Check current migration status
-docker-compose exec web alembic current
-
-# Apply all pending migrations
-docker-compose exec web alembic upgrade head
-
-# If migrations are corrupted, reset
-docker-compose down -v
-docker-compose up -d db
-docker-compose exec web alembic upgrade head
-```
-
----
-
-### Problem: Docker daemon not running
-
-**Error:**
-```
-Cannot connect to the Docker daemon
-```
-
-**Solution:**
-
-- **Windows/Mac**: Start Docker Desktop application
-- **Linux**: 
-  ```bash
-  sudo systemctl start docker
-  sudo systemctl enable docker
-  ```
-
----
-
-### Problem: Permission denied (Linux)
-
-**Error:**
-```
-permission denied while trying to connect to the Docker daemon
-```
-
-**Solution:**
-
-```bash
-# Add your user to docker group
-sudo usermod -aG docker $USER
-
-# Apply group changes
-newgrp docker
-
-# Restart terminal or logout/login
-```
-
----
-
-### Problem: Changes not reflecting
-
-**Solution:**
-
-```bash
-# Rebuild containers
-docker-compose up --build
-
-# If database changes, also run migrations
-docker-compose exec web alembic upgrade head
-
-# For complete refresh
-docker-compose down
-docker-compose up --build
-```
-
----
-
-### Problem: Out of disk space
-
-**Solution:**
-
-```bash
-# Remove unused Docker resources
-docker system prune -a
-
-# Remove all stopped containers
-docker container prune
-
-# Remove unused volumes (⚠️ may delete data)
-docker volume prune
-```
-
----
-
-## 🔄 Fresh Start (Reset Everything)
-
-If you want to start completely fresh:
-
-```bash
-# Stop and remove everything
+# Stop and remove all containers and volumes
 docker-compose down -v
 
-# Remove Docker images
-docker-compose rm -f
-
-# Rebuild from scratch
-docker-compose up --build
-
-# Setup database
-docker-compose exec web alembic upgrade head
-
-# Create admin
-docker-compose exec web python -m app.Cli.admin
+# Start fresh
+docker-compose up -d
 ```
 
----
+## WebSocket Support
 
-## 📖 Additional Resources
+The backend includes WebSocket support for real-time messaging:
 
-### Project Structure
+- **Endpoint**: `ws://localhost:8000/ws/messages?token=YOUR_JWT_TOKEN`
+- **Features**: Real-time chat, typing indicators, message deletion
+- **Authentication**: JWT token passed as query parameter
 
+## Testing
+
+```bash
+# Run tests (when test suite is available)
+docker-compose exec backend pytest
+
+# Run with coverage
+docker-compose exec backend pytest --cov=app
 ```
-ahl_quran_backend/
-├── app/
-│   ├── api/v1/routes/      # API endpoints
-│   ├── models/             # Database models
-│   ├── schemas/            # Request/response schemas
-│   ├── core/               # Configuration & security
-│   └── db/                 # Database connection
-├── alembic/                # Database migrations
-├── Dockerfile              # Container image definition
-├── docker-compose.yml      # Multi-container orchestration
-├── requirements.txt        # Python dependencies
-└── .env                    # Environment configuration
-```
+
+## Production Deployment
+
+1. Update environment variables for production
+2. Change `SECRET_KEY` to a secure random value
+3. Set `DEBUG=false`
+4. Use production-grade database configuration
+5. Set up proper CORS origins in `app/main.py`
+
+## Migrations are Sustainable ✅
+
+- ✅ Migrations run automatically on container startup
+- ✅ No manual intervention needed for deployments
+- ✅ Backend won't start if migrations fail (fail-safe)
+- ✅ Data consistency issues fixed through migrations
+- ✅ Version controlled migration files
+- ✅ Easy to create, test, and deploy new migrations
+
+**Just restart the container and migrations apply automatically!**

@@ -20,42 +20,6 @@ services:
       retries: 5
     restart: unless-stopped
 
-  migrate:
-    image: postgres:15-alpine
-    container_name: ahlquran-migrate
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-ahlquran_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ahlquran_pass}
-      POSTGRES_DB: ${POSTGRES_DB:-ahlquran_db}
-    command:
-      - sh
-      - -ec
-      - |
-        echo "Waiting for database to be ready..."
-        until pg_isready --host=db --port=5432 --username=$$POSTGRES_USER --dbname=$$POSTGRES_DB; do
-          sleep 2
-        done
-        
-        if PGPASSWORD=$$POSTGRES_PASSWORD psql --host=db --port=5432 --username=$$POSTGRES_USER --dbname=$$POSTGRES_DB -tAc "SELECT to_regclass('public.users') IS NOT NULL;" | grep -q t; then
-          echo "Database schema already present."
-          if PGPASSWORD=$$POSTGRES_PASSWORD psql --host=db --port=5432 --username=$$POSTGRES_USER --dbname=$$POSTGRES_DB -tAc "SELECT to_regclass('public.attendances') IS NULL OR to_regclass('public.teacher_attendances') IS NULL;" | grep -q t; then
-            echo "Attendance tables missing in existing database. Restoring attendance tables..."
-            PGPASSWORD=$$POSTGRES_PASSWORD psql --host=db --port=5432 --username=$$POSTGRES_USER --dbname=$$POSTGRES_DB --file=/backup/database_backup.sql
-          fi
-        else
-          echo "Database schema missing. Bootstrapping from backup..."
-          PGPASSWORD=$$POSTGRES_PASSWORD psql --host=db --port=5432 --username=$$POSTGRES_USER --dbname=$$POSTGRES_DB --file=/backup/database_backup.sql
-          echo "Backup restore completed."
-        fi
-    volumes:
-      - ./database_backup_clean.sql:/backup/database_backup.sql:ro
-    networks:
-      - ahlquran-network
-    depends_on:
-      db:
-        condition: service_healthy
-    restart: "no"
-
   backend:
     build:
       context: .
@@ -70,6 +34,8 @@ services:
     volumes:
       - ./uploads:/app/uploads
       - ./app:/app/app
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
     ports:
       - "8000:8000"
     networks:
@@ -77,8 +43,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     restart: unless-stopped
 

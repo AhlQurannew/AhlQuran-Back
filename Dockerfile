@@ -26,8 +26,9 @@ COPY ./app ./app
 COPY alembic.ini /app/alembic.ini
 COPY alembic /app/alembic
 
-# Copy database backup used by restore profile
-COPY database_backup.sql /app/database_backup.sql
+# Copy startup script
+COPY scripts/startup.sh /app/startup.sh
+RUN chmod +x /app/startup.sh
 
 # Create uploads directory
 RUN mkdir -p /app/uploads
@@ -35,5 +36,8 @@ RUN mkdir -p /app/uploads
 # Expose port
 EXPOSE 8000
 
-# Run the application (can be overridden by docker-compose)
+# Use startup script as entrypoint
+ENTRYPOINT ["/app/startup.sh"]
+
+# Run the application (passed to entrypoint)
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

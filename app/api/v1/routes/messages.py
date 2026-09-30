@@ -6,6 +6,7 @@ from app.models.user import User
 from app.models.message import Message
 from app.schemas.message import MessageCreate, MessageResponse, MessageList
 from app.core.dependencies import get_current_user
+from app.api.v1.routes.ws_messages import broadcast_to_group
 import logging
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,20 @@ async def create_message(
     await db.refresh(new_message)
     
     logger.info(f"Message created by {sender_name} ({message_data.sender_role})")
+
+    # Broadcast to active WebSocket clients
+    try:
+        await broadcast_to_group(president_id, {
+            "type": "message",
+            "id": new_message.id,
+            "sender_id": new_message.sender_id,
+            "sender_name": new_message.sender_name,
+            "sender_role": new_message.sender_role.value if hasattr(new_message.sender_role, "value") else str(new_message.sender_role),
+            "message": new_message.message,
+            "created_at": new_message.created_at.isoformat(),
+        })
+    except Exception as e:
+        logger.warning(f"Failed to broadcast REST created message over WS: {e}")
     
     return new_message
 
@@ -128,7 +143,7 @@ async def get_recent_messages(
 ):
     """
     Get recent messages (default last 50).
-    Optimized for polling - returns newest messages first.
+    Optimized for polling / initial load - returns newest messages first.
     """
     
     # Get president ID based on user role
@@ -181,9 +196,19 @@ async def delete_message(
             detail="You can only delete your own messages"
         )
     
+    president_id = message.president_id
     await db.delete(message)
     await db.commit()
     
     logger.info(f"Message {message_id} deleted by user {current_user.id}")
+    
+    if president_id:
+        try:
+            await broadcast_to_group(president_id, {
+                "type": "delete",
+                "id": message_id
+            })
+        except Exception as e:
+            logger.warning(f"Failed to broadcast message deletion over WS: {e}")
     
     return None

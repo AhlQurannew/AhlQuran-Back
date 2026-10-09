@@ -117,3 +117,25 @@ class StudentResponse(BaseModel):
 class StudentList(BaseModel):
     students: list[StudentResponse]
     total: int
+
+class StudentRemarkCreate(BaseModel):
+    content: str = Field(..., min_length=1, example="طالب ممتاز ومجتهد في المراجعة")
+    category: Optional[str] = Field("general", example="behavior")
+
+
+class StudentRemarkResponse(BaseModel):
+    id: int
+    student_id: int
+    author_id: int
+    author_name: str
+    content: str
+    category: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class StudentRemarkList(BaseModel):
+    remarks: List[StudentRemarkResponse]
+    total: int

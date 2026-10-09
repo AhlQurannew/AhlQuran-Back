@@ -870,3 +870,145 @@ async def delete_attendance(
     logger.info(f"Attendance {attendance_id} deleted by user {current_user.id}")
 
     return None
+
+from app.models.student import StudentRemark
+from app.schemas.student import StudentRemarkCreate, StudentRemarkResponse, StudentRemarkList
+
+# ==================== REMARKS OPERATIONS ====================
+
+@studentRouter.post("/{student_id}/remarks", response_model=StudentRemarkResponse, status_code=status.HTTP_201_CREATED)
+async def add_student_remark(
+    student_id: int,
+    remark_data: StudentRemarkCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Ajouter une remarque / observation pour un étudiant."""
+    
+    # Vérifier l'existence de l'étudiant
+    result = await db.execute(select(Student).where(Student.id == student_id))
+    student = result.scalar_one_or_none()
+
+    if not student:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Student with ID {student_id} not found"
+        )
+
+    # Créer la remarque
+    new_remark = StudentRemark(
+        student_id=student_id,
+        author_id=current_user.id,
+        content=remark_data.content,
+        category=remark_data.category
+    )
+
+    db.add(new_remark)
+    await db.commit()
+    await db.refresh(new_remark)
+
+    author_name = f"{current_user.firstname} {current_user.lastname}".strip()
+
+    logger.info(f"Remark added for student {student_id} by user {current_user.id}")
+
+    return StudentRemarkResponse(
+        id=new_remark.id,
+        student_id=new_remark.student_id,
+        author_id=new_remark.author_id,
+        author_name=author_name,
+        content=new_remark.content,
+        category=new_remark.category,
+        created_at=new_remark.created_at
+    )
+
+
+@studentRouter.get("/{student_id}/remarks", response_model=StudentRemarkList)
+async def get_student_remarks(
+    student_id: int,
+    skip: int = 0,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Récupérer toutes les remarques d'un étudiant."""
+    
+    # Vérifier l'existence de l'étudiant
+    result = await db.execute(select(Student).where(Student.id == student_id))
+    student = result.scalar_one_or_none()
+
+    if not student:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Student with ID {student_id} not found"
+        )
+
+    # Requête avec jointure sur User pour obtenir le nom de l'auteur
+    query = (
+        select(StudentRemark)
+        .options(selectinload(StudentRemark.author))
+        .where(StudentRemark.student_id == student_id)
+        .order_by(StudentRemark.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    
+    res = await db.execute(query)
+    remarks = res.scalars().all()
+
+    # Compte total
+    count_res = await db.execute(
+        select(StudentRemark).where(StudentRemark.student_id == student_id)
+    )
+    total = len(count_res.scalars().all())
+
+    response_list = [
+        StudentRemarkResponse(
+            id=r.id,
+            student_id=r.student_id,
+            author_id=r.author_id,
+            author_name=f"{r.author.firstname} {r.author.lastname}".strip(),
+            content=r.content,
+            category=r.category,
+            created_at=r.created_at
+        )
+        for r in remarks
+    ]
+
+    return StudentRemarkList(remarks=response_list, total=total)
+
+
+@studentRouter.delete("/{student_id}/remarks/{remark_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_student_remark(
+    student_id: int,
+    remark_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Supprimer une remarque d'un étudiant."""
+    
+    result = await db.execute(
+        select(StudentRemark).where(
+            StudentRemark.id == remark_id,
+            StudentRemark.student_id == student_id
+        )
+    )
+    remark = result.scalar_one_or_none()
+
+    if not remark:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Remark not found"
+        )
+
+    # Sécurité : seul l'auteur ou un admin/président peut supprimer
+    if remark.author_id != current_user.id and current_user.role not in [UserRoleEnum.PRESIDENT, UserRoleEnum.SUPERVISOR]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to delete this remark"
+        )
+
+    await db.delete(remark)
+    await db.commit()
+
+    logger.info(f"Remark {remark_id} deleted by user {current_user.id}")
+    return None

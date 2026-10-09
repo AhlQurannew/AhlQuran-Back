@@ -1,4 +1,4 @@
-from sqlalchemy import String, Integer, ForeignKey, DateTime, Boolean
+from sqlalchemy import String, Integer, ForeignKey, DateTime, Boolean, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime, timezone
 from typing import Optional, List
@@ -67,6 +67,13 @@ class Student(Base):
         foreign_keys="Achievement.student_id"
     )
 
+    # Remarks relationship
+    remarks: Mapped[List["StudentRemark"]] = relationship(
+        "StudentRemark",
+        back_populates="student",
+        cascade="all, delete-orphan"
+    )
+
     # Relationships
     user: Mapped["User"] = relationship(
         "User",
@@ -86,3 +93,30 @@ class Student(Base):
     
     def __repr__(self) -> str:
         return f"Student(id={self.id}, user_id={self.user_id}, president_id={self.president_id})"
+
+
+class StudentRemark(Base):
+    __tablename__ = "student_remarks"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    student_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("students.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    author_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[Optional[str]] = mapped_column(String(50), default="general")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), 
+        default=lambda: datetime.now(timezone.utc)
+    )
+
+    # Relationships
+    student: Mapped["Student"] = relationship("Student", back_populates="remarks")
+    author: Mapped["User"] = relationship("User")

@@ -146,7 +146,8 @@ async def require_president(
 async def require_supervisor(
     current_user: User = Depends(get_current_user)
 ) -> User:
-    if current_user.role != UserRoleEnum.SUPERVISOR:
+    allowed = [UserRoleEnum.SUPERVISOR, UserRoleEnum.CHIEF_SUPERVISOR]
+    if current_user.role not in allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This action requires supervisor privileges"
@@ -157,11 +158,24 @@ async def require_supervisor(
 async def require_president_or_supervisor(
     current_user: User = Depends(get_current_user)
 ):
-    allowed = [UserRoleEnum.PRESIDENT, UserRoleEnum.SUPERVISOR]
+    allowed = [UserRoleEnum.PRESIDENT, UserRoleEnum.SUPERVISOR, UserRoleEnum.CHIEF_SUPERVISOR]
     if current_user.role not in allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This action requires president or supervisor privileges"
+        )
+    return current_user
+
+
+async def require_president_or_chief_supervisor(
+    current_user: User = Depends(get_current_user)
+):
+    """Chief Supervisor can manage supervisors"""
+    allowed = [UserRoleEnum.PRESIDENT, UserRoleEnum.CHIEF_SUPERVISOR]
+    if current_user.role not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This action requires president or chief supervisor privileges"
         )
     return current_user
 
@@ -183,7 +197,7 @@ async def require_teacher(
 async def require_teacher_or_above(
     current_user: User = Depends(get_current_user)
 ) -> User:
-    allowed = [UserRoleEnum.TEACHER, UserRoleEnum.SUPERVISOR, UserRoleEnum.PRESIDENT]
+    allowed = [UserRoleEnum.TEACHER, UserRoleEnum.SUPERVISOR, UserRoleEnum.CHIEF_SUPERVISOR, UserRoleEnum.PRESIDENT]
     if current_user.role not in allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

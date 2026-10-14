@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -26,6 +28,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
     
     # Environment
+    APP_ENV: Literal["development", "production"] = "production"
     DEBUG: bool = False
     @field_validator("SECRET_KEY")
     @classmethod

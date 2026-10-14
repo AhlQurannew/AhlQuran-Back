@@ -16,6 +16,7 @@ services:
     restart: unless-stopped
 
   backend:
+    image: ${BACKEND_IMAGE:-ahlquran-backend:local}
     build:
       context: .
       dockerfile: Dockerfile
@@ -30,10 +31,11 @@ services:
       DB_POOL_TIMEOUT_SECONDS: ${DB_POOL_TIMEOUT_SECONDS:-30}
       CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:3000"]}'
       DEBUG: ${DEBUG:-false}
+      APP_ENV: ${APP_ENV:?APP_ENV is required}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
-      migrate:
+      seed-admin:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
@@ -44,9 +46,7 @@ services:
     restart: unless-stopped
 
   migrate:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${BACKEND_IMAGE:-ahlquran-backend:local}
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       DEBUG: "false"
@@ -54,6 +54,20 @@ services:
       db:
         condition: service_healthy
     command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  seed-admin:
+    image: ${BACKEND_IMAGE:-ahlquran-backend:local}
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      APP_ENV: ${APP_ENV:?APP_ENV is required}
+      INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME:?INITIAL_ADMIN_USERNAME is required}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:?INITIAL_ADMIN_PASSWORD is required}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["python", "-m", "app.cli.admin", "seed"]
     restart: "no"
 
 volumes:

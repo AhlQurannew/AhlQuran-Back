@@ -2,7 +2,7 @@
 
 ## Configuration
 
-Provide `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `DATABASE_URL`, and `SECRET_KEY` through the deployment secret manager or an untracked `.env` file for local Compose. Use a randomly generated secret key and a database password that is URL-encoded in `DATABASE_URL`. Set `CORS_ORIGINS` to the exact frontend origins. Keep `DEBUG=false` in every shared environment.
+Provide `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `DATABASE_URL`, `SECRET_KEY`, `APP_ENV=production`, `INITIAL_ADMIN_USERNAME`, and `INITIAL_ADMIN_PASSWORD` through the deployment secret manager. Use unique random secrets, URL-encode the database password in `DATABASE_URL`, and set `CORS_ORIGINS` to exact frontend origins. Keep `DEBUG=false` in every shared environment. Production bootstrap passwords must be at least 12 characters; `admin123` is rejected in production.
 
 The `.env` file and SQL backups are intentionally excluded from Git and Docker build context. Store backups outside the source tree, encrypt them, restrict access, and define retention and restore drills.
 
@@ -14,7 +14,7 @@ The `.env` file and SQL backups are intentionally excluded from Git and Docker b
 4. Start or roll out the backend only after migration success.
 5. Verify `/health/ready`, authentication, and tenant-scoped read/write flows; monitor application and database errors.
 
-Compose encodes this dependency: PostgreSQL health precedes the one-shot `migrate` service, and the backend waits for that service to complete successfully. In orchestrated production environments, run the same migration command as a serialized release job, not once per application replica.
+Compose encodes this dependency: PostgreSQL health precedes the one-shot `migrate` service, `seed-admin` runs only after migrations, and the backend waits for the seed job to complete. The seed is idempotent and does not reset an existing administrator password. In orchestrated production environments, run migrations as a serialized release job, then run the seed job before starting application replicas.
 
 ## Migration Rules
 
@@ -28,7 +28,7 @@ Compose encodes this dependency: PostgreSQL health precedes the one-shot `migrat
 
 ## Administrator Provisioning
 
-There is no built-in production username or password. After migrations succeed, create an administrator interactively:
+The one-shot seed job provisions the configured administrator after migrations. For manual provisioning or rotation, create an administrator interactively:
 
 ```sh
 docker compose run --rm backend python -m app.cli.admin create

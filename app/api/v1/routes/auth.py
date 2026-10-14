@@ -10,7 +10,7 @@ from app.models.user import User, UserRoleEnum
 from app.models.president import President
 from app.models.teacher import Teacher
 from app.models.guardian import Guardian
-from app.core.security import create_access_token, create_refresh_token, verify_password, upgrade_password_if_needed, get_password_hash, decode_token
+from app.core.security import create_access_token, create_refresh_token, verify_password, upgrade_password_if_needed, get_password_hash, is_password_hashed, decode_token
 from app.core.config import settings
 from app.schemas.auth import (
     AdminLoginReq,
@@ -121,7 +121,7 @@ async def president_login(
             detail="Account is pending admin approval. Please wait for administrator to activate your account."
         )
 
-    logger.info(f"president login: {user}")
+    logger.info("President login succeeded for user_id=%s", user.id)
 
     # Create access token and refresh token
     token_data = {
@@ -169,18 +169,16 @@ async def supervisor_login(
     response : Response,
     db: AsyncSession = Depends(get_db),
 ):
-    logger.info(f"supervisor data form: {form_data}")
+    logger.info("Supervisor login attempt")
 
     # Find user by email AND role
     result = await db.execute(
         select(User).where(
             User.email == form_data.email,
-            User.role == UserRoleEnum.SUPERVISOR
+            User.role.in_((UserRoleEnum.SUPERVISOR, UserRoleEnum.CHIEF_SUPERVISOR)),
         )
     )
     user = result.scalar_one_or_none()
-
-    logger.info(f"found supervisor: {user}")
 
     if not user:
         raise HTTPException(
@@ -258,7 +256,7 @@ async def teacher_login(
     response : Response,
     db: AsyncSession = Depends(get_db),
 ):
-    logger.info(f"teacher login attempt: {form_data.email}")
+    logger.info("Teacher login attempt")
 
     # Find user by email AND role
     result = await db.execute(
@@ -357,7 +355,7 @@ async def guardian_login(
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    logger.info(f"guardian login attempt: {form_data.email}")
+    logger.info("Guardian login attempt")
 
     # Find user by email AND role
     result = await db.execute(
@@ -456,7 +454,7 @@ async def admin_login(
     response : Response,
     db: AsyncSession = Depends(get_db)
 ):
-    logger.info(f"admin login: {form_data}")
+    logger.info("Admin login attempt")
     
     result = await db.execute(
         select(Admin).where(Admin.user == form_data.user)  
@@ -471,12 +469,16 @@ async def admin_login(
         )
     
     # Verify password
-    if form_data.password != admin.password :
+    if not verify_password(form_data.password, admin.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    if not is_password_hashed(admin.password_hash):
+        admin.password_hash = get_password_hash(form_data.password)
+        await db.commit()
     
         #  if not admin.is_active:
         #   raise HTTPException(
@@ -499,8 +501,6 @@ async def admin_login(
     )
     
     refresh_token = create_refresh_token(data=token_data)
-
-    logger.info(f"admin access token: {access_token}")
 
     response.set_cookie(
         key="access_token",
@@ -546,7 +546,7 @@ async def get_current_user_info(
 async def get_current_admin_info(
     current_admin = Depends(require_admin)
 ):
-    logger.info(f"current admin: {current_admin}")
+    logger.info("Current administrator requested")
 
     return {
         "id": current_admin.id,

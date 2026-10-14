@@ -1,11 +1,12 @@
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.db.session import get_db
 from app.models.user import User
-from app.models.message import Message
+from app.models.message import Message, SenderRole
 from app.schemas.message import MessageCreate, MessageResponse, MessageList
 from app.core.dependencies import get_current_user
+from app.core.multi_tenancy import get_president_id_for_user as resolve_president_id
 from app.api.v1.routes.ws_messages import broadcast_to_group
 import logging
 
@@ -15,41 +16,17 @@ messageRouter = APIRouter()
 
 
 async def get_president_id_for_user(current_user: User, db: AsyncSession) -> int:
-    """
-    Get the president_id for any user (president, teacher, or supervisor).
-    Raises HTTPException if unable to determine organization.
-    """
-    president_id = None
-    
-    if current_user.role.value == "PRESIDENT":
-        from app.models.president import President
-        result = await db.execute(
-            select(President).where(President.user_id == current_user.id)
-        )
-        president = result.scalar_one_or_none()
-        if president:
-            president_id = president.id
-    elif current_user.role.value == "TEACHER":
-        from app.models.teacher import Teacher
-        result = await db.execute(
-            select(Teacher).where(Teacher.user_id == current_user.id)
-        )
-        teacher = result.scalar_one_or_none()
-        if teacher:
-            president_id = teacher.president_id
-    elif current_user.role.value == "SUPERVISOR":
-        from app.models.supervisor import Supervisor
-        result = await db.execute(
-            select(Supervisor).where(Supervisor.user_id == current_user.id)
-        )
-        supervisor = result.scalar_one_or_none()
-        if supervisor:
-            president_id = supervisor.president_id
-    
-    if not president_id:
-        raise HTTPException(status_code=403, detail="Unable to determine organization")
-    
-    return president_id
+    return await resolve_president_id(current_user, db)
+
+
+def get_sender_role(user: User) -> SenderRole:
+    role = user.role.value if hasattr(user.role, "value") else str(user.role)
+    if role == "CHIEF_SUPERVISOR":
+        role = "SUPERVISOR"
+    try:
+        return SenderRole(role.lower())
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="This account cannot send messages") from exc
 
 
 @messageRouter.post("/", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
@@ -73,7 +50,7 @@ async def create_message(
     new_message = Message(
         sender_id=current_user.id,
         sender_name=sender_name,
-        sender_role=message_data.sender_role,
+        sender_role=get_sender_role(current_user),
         message=message_data.message,
         president_id=president_id
     )
@@ -82,7 +59,7 @@ async def create_message(
     await db.commit()
     await db.refresh(new_message)
     
-    logger.info(f"Message created by {sender_name} ({message_data.sender_role})")
+    logger.info("Message created by user_id=%s", current_user.id)
 
     # Broadcast to active WebSocket clients
     try:
@@ -103,8 +80,8 @@ async def create_message(
 
 @messageRouter.get("/", response_model=MessageList)
 async def get_messages(
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -137,7 +114,7 @@ async def get_messages(
 
 @messageRouter.get("/recent", response_model=MessageList)
 async def get_recent_messages(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -177,9 +154,12 @@ async def delete_message(
     Delete a message. Only the sender can delete their own message.
     """
     
-    # Get the message
+    president_id = await get_president_id_for_user(current_user, db)
     result = await db.execute(
-        select(Message).where(Message.id == message_id)
+        select(Message).where(
+            Message.id == message_id,
+            Message.president_id == president_id,
+        )
     )
     message = result.scalar_one_or_none()
     
@@ -196,7 +176,6 @@ async def delete_message(
             detail="You can only delete your own messages"
         )
     
-    president_id = message.president_id
     await db.delete(message)
     await db.commit()
     

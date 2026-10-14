@@ -32,8 +32,18 @@ README.md
 
 # Environment
 .env.local
+.env
 .env.development
 .env.test
+.env.production
+database_backup*.sql
+*.dump
+*.backup
+__pycache__/
+*.py[cod]
+.hypothesis/
+.pytest_cache/
+tests/
 
 # Logs
 *.log

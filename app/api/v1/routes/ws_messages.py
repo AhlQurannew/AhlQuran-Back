@@ -42,7 +42,7 @@ async def get_president_id_for_user(user: User, db: AsyncSession) -> int | None:
         teacher = result.scalar_one_or_none()
         return teacher.president_id if teacher else None
     
-    if role == "SUPERVISOR":
+    if role in {"SUPERVISOR", "CHIEF_SUPERVISOR"}:
         result = await db.execute(select(Supervisor).where(Supervisor.user_id == user.id))
         sup = result.scalar_one_or_none()
         return sup.president_id if sup else None
@@ -56,7 +56,7 @@ async def authenticate_ws_token(token: str, db: AsyncSession) -> User | None:
         return None
     
     payload = decode_token(token)
-    if not payload:
+    if not payload or payload.get("type") != "access":
         return None
     
     user_id = payload.get("user_id")
@@ -107,7 +107,7 @@ async def handle_websocket_connection(websocket: WebSocket, token: str):
         _groups[president_id].add(websocket)
         
         sender_name = f"{user.firstname} {user.lastname}"
-        logger.info(f"[WS] User '{sender_name}' (ID: {user.id}) connected to group {president_id}")
+        logger.info("WebSocket connected user_id=%s school_id=%s", user.id, president_id)
         
         # Send welcome / connected event to client
         await websocket.send_text(json.dumps({
@@ -145,7 +145,12 @@ async def handle_websocket_connection(websocket: WebSocket, token: str):
                     if not msg_id:
                         continue
                     
-                    res = await db.execute(select(Message).where(Message.id == msg_id))
+                    res = await db.execute(
+                        select(Message).where(
+                            Message.id == msg_id,
+                            Message.president_id == president_id,
+                        )
+                    )
                     msg_to_del = res.scalar_one_or_none()
                     
                     if msg_to_del and msg_to_del.sender_id == user.id:
@@ -159,18 +164,18 @@ async def handle_websocket_connection(websocket: WebSocket, token: str):
                 
                 # ── Chat Message ──────────────────────────────────
                 msg_text = (payload.get("message") or "").strip()
-                sender_role_raw = (payload.get("sender_role") or "").lower()
                 
                 if not msg_text:
                     continue
                 
-                allowed_roles = {"teacher", "supervisor", "president"}
-                if sender_role_raw not in allowed_roles:
-                    # Fallback role from user object
-                    u_role = user.role.value.lower() if hasattr(user.role, "value") else str(user.role).lower()
-                    sender_role_raw = u_role if u_role in allowed_roles else "teacher"
-                
-                role_enum = SenderRole(sender_role_raw)
+                u_role = user.role.value if hasattr(user.role, "value") else str(user.role)
+                if u_role == "CHIEF_SUPERVISOR":
+                    u_role = "SUPERVISOR"
+                try:
+                    role_enum = SenderRole(u_role.lower())
+                except ValueError:
+                    await websocket.send_text(json.dumps({"type": "error", "detail": "This account cannot send messages"}))
+                    continue
                 
                 new_msg = Message(
                     sender_id=user.id,
@@ -194,12 +199,12 @@ async def handle_websocket_connection(websocket: WebSocket, token: str):
                 }
                 await broadcast_to_group(president_id, broadcast_data)
                 
-                logger.info(f"[WS] Message {new_msg.id} from {sender_name} broadcast to group {president_id}")
+                logger.info("WebSocket message_id=%s school_id=%s", new_msg.id, president_id)
         
         except WebSocketDisconnect:
-            logger.info(f"[WS] User '{sender_name}' disconnected from group {president_id}")
-        except Exception as e:
-            logger.error(f"[WS] Error for {sender_name}: {e}")
+            logger.info("WebSocket disconnected user_id=%s school_id=%s", user.id, president_id)
+        except Exception:
+            logger.exception("WebSocket error user_id=%s school_id=%s", user.id, president_id)
         finally:
             _groups[president_id].discard(websocket)
             if president_id in _groups and not _groups[president_id]:

@@ -9,6 +9,7 @@ from app.db.base import Base
 class UserRoleEnum(str, Enum):
     PRESIDENT = "PRESIDENT"
     SUPERVISOR = "SUPERVISOR"
+    CHIEF_SUPERVISOR = "CHIEF_SUPERVISOR"
     TEACHER = "TEACHER"
     STUDENT = "STUDENT"
     GUARDIAN = "GUARDIAN"

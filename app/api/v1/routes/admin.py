@@ -55,14 +55,10 @@ async def approve_president(
     db: AsyncSession = Depends(get_db),
     admin = Depends(require_admin)
 ):
-    logger.info(f"Admin __ : {admin}")
-
     result = await db.execute(
         select(User).options(selectinload(User.president)).where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
-
-    logger.info(f"the president {result}")
 
     if not user:
         raise HTTPException(
@@ -297,11 +293,11 @@ async def get_all_schools(
             "total": len(schools_list),
             "schools": schools_list
         }
-    except Exception as e:
-        logger.error(f"[SCHOOLS] Error: {str(e)}")
+    except Exception:
+        logger.exception("Failed to fetch school overview")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error fetching schools: {str(e)}"
+            detail="Unable to fetch schools"
         )
 
 

@@ -23,34 +23,35 @@ async def get_current_user(
         if auth_header and auth_header.startswith("Bearer "):
             access_token = auth_header
         else:
-            logger.error("No access token found in cookies or Authorization header")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Not authenticated",
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-    logger.info(f"Received credentials: {access_token[:50]}...")
     # Remove "Bearer " prefix if present
-    token = access_token.replace("Bearer ", "")
+    token = access_token.removeprefix("Bearer ").strip()
 
-    logger.info(f"Token after removing Bearer: {token[:50]}...")
     # Decode token
     payload = decode_token(token)
-    logger.info(f"Decoded payload: {payload}")
     
     # Check if token decode failed
     if payload is None:
-        logger.error("Token decode failed - payload is None")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    if payload.get("type") != "access":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token type",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     
     # Check token type
     token_type = payload.get("role")
-    logger.info(f"Token role: {token_type}")
 
     # For admin tokens, check if type is "admin"
     if token_type == "admin":
@@ -81,7 +82,6 @@ async def get_current_user(
     # For user tokens
     user_id = payload.get("user_id")
     if user_id is None:
-        logger.error("No user_id in token payload")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
@@ -94,7 +94,6 @@ async def get_current_user(
     user = result.scalar_one_or_none()
 
     if user is None:
-        logger.error(f"User not found for user_id: {user_id}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
@@ -102,13 +101,11 @@ async def get_current_user(
         )
 
     if not user.is_active:
-        logger.error(f"User {user_id} is inactive")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is inactive. Please wait for administrator approval."
         )
 
-    logger.info(f"User authenticated: id={user.id}, role={user.role}")
     return user
 
 # ==================== ROLE-BASED DEPENDENCIES ====================
@@ -117,7 +114,6 @@ async def require_admin(
     current_user = Depends(get_current_user)
 ):
     from app.models.admin import Admin
-    logger.info(f"the current admin : {current_user}")
 
     # If it's an Admin object, allow access
     if isinstance(current_user, Admin):
@@ -183,13 +179,10 @@ async def require_president_or_chief_supervisor(
 async def require_teacher(
     current_user: User = Depends(get_current_user)
 ) -> User:
-    logger.info(f"require_teacher check: user_id={current_user.id}, role={current_user.role}, role_type={type(current_user.role)}")
-    logger.info(f"UserRoleEnum.TEACHER={UserRoleEnum.TEACHER}, type={type(UserRoleEnum.TEACHER)}")
     if current_user.role != UserRoleEnum.TEACHER:
-        logger.error(f"Role mismatch: {current_user.role} != {UserRoleEnum.TEACHER}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"TEACHER_CHECK_FAILED: This action requires teacher privileges. Your role: {current_user.role}"
+            detail="This action requires teacher privileges"
         )
     return current_user
 

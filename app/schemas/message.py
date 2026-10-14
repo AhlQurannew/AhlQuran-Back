@@ -14,7 +14,7 @@ class SenderRole(str, Enum):
 
 class MessageCreate(BaseModel):
     message: str = Field(..., min_length=1, max_length=5000, example="Hello, this is a test message")
-    sender_role: SenderRole = Field(..., example="teacher")
+    sender_role: SenderRole | None = Field(None, example="teacher")
 
 
 class MessageResponse(BaseModel):

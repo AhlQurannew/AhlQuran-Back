@@ -10,7 +10,7 @@ class Admin(Base):
 
     id : Mapped[int] = mapped_column(primary_key=True, index=True)
     user : Mapped[str] = mapped_column(String, unique=True, index=True)
-    password : Mapped[str] = mapped_column(String)
+    password_hash: Mapped[str] = mapped_column("password", String)
     
     role : Mapped[str] = mapped_column(String, default="admin")
 
@@ -19,4 +19,4 @@ class Admin(Base):
      
 
     def __repr__(self):
-        return f"<Admin(id={self.id}, user={self.user}, password={self.password})>"
+        return f"<Admin(id={self.id}, user={self.user})>"

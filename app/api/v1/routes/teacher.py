@@ -300,10 +300,6 @@ async def get_my_lectures(
     Get all lectures assigned to the current teacher with full details.
     Returns the same format as /special/lectures for consistency.
     """
-    print("=" * 80)
-    print("MY-LECTURES ENDPOINT CALLED!")
-    print("=" * 80)
-    
     from app.schemas.lecture import LectureResponse, TeacherResponse, WeeklyScheduleResponse
     from sqlalchemy.orm import joinedload
     

@@ -56,6 +56,19 @@ authRouter = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+async def _load_settings_user(db: AsyncSession, user_id: int) -> User:
+    result = await db.execute(
+        select(User).options(
+            selectinload(User.president),
+            selectinload(User.supervisor).selectinload(Supervisor.president),
+            selectinload(User.teacher).selectinload(Teacher.president),
+            selectinload(User.guardian).selectinload(Guardian.student).selectinload(Student.user),
+            selectinload(User.student),
+        ).where(User.id == user_id).execution_options(populate_existing=True)
+    )
+    return result.scalar_one()
+
+
 # ========== PRESIDENT REGISTRATION ==========
 @authRouter.post("/president/register", response_model=RegisterResponse)
 async def president_register(
@@ -801,16 +814,7 @@ async def get_account_settings(
     db: AsyncSession = Depends(get_db),
 ):
     if isinstance(account, User):
-        result = await db.execute(
-            select(User).options(
-                selectinload(User.president),
-                selectinload(User.supervisor).selectinload(Supervisor.president),
-                selectinload(User.teacher).selectinload(Teacher.president),
-                selectinload(User.guardian).selectinload(Guardian.student).selectinload(Student.user),
-                selectinload(User.student),
-            ).where(User.id == account.id)
-        )
-        account = result.scalar_one()
+        account = await _load_settings_user(db, account.id)
     preference = await _get_account_preferences(db, account)
     return {
         "role": "ADMIN" if isinstance(account, Admin) else account.role.value,
@@ -828,6 +832,9 @@ async def update_account_profile(
     account=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if isinstance(account, User):
+        account = await _load_settings_user(db, account.id)
+
     values = changes.model_dump(exclude_unset=True)
     for field in ("firstname", "lastname", "school_name", "username"):
         if field in values and values[field] is not None:
@@ -865,17 +872,8 @@ async def update_account_profile(
                 if field in values:
                     setattr(account.guardian, target, values[field].strip() or None)
     await db.commit()
-    refreshed = await db.execute(
-        select(User).options(
-            selectinload(User.president),
-            selectinload(User.supervisor).selectinload(Supervisor.president),
-            selectinload(User.teacher).selectinload(Teacher.president),
-            selectinload(User.guardian).selectinload(Guardian.student).selectinload(Student.user),
-            selectinload(User.student),
-        ).where(User.id == account.id)
-    ) if isinstance(account, User) else None
-    if refreshed is not None:
-        account = refreshed.scalar_one()
+    if isinstance(account, User):
+        account = await _load_settings_user(db, account.id)
     return {"profile": _profile_payload(account)}
 
 

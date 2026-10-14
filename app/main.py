@@ -47,7 +47,6 @@ app.add_middleware(
 
 register_routes(app)
 
-
 @app.get("/health/live", tags=["health"])
 async def liveness():
     return {"status": "ok"}

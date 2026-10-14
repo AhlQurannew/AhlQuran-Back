@@ -32,8 +32,11 @@ services:
       CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:3000"]}'
       DEBUG: ${DEBUG:-false}
       APP_ENV: ${APP_ENV:?APP_ENV is required}
+      UPLOAD_DIR: /app/uploads
     ports:
       - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - student_uploads:/app/uploads
     depends_on:
       seed-admin:
         condition: service_completed_successfully
@@ -72,4 +75,6 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+  student_uploads:
     driver: local

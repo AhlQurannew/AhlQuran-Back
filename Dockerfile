@@ -14,6 +14,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 RUN groupadd --system app && useradd --system --gid app --home-dir /app app \
+    && mkdir -p /app/uploads \
     && chown -R app:app /app
 
 # Copy application code

@@ -1,10 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse
+from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
 from app.models.user import User, UserRoleEnum
+from app.models.admin import Admin
 from app.models.student import Student
 from app.models.acheivements import Achievement
 from app.models.attendance import Attendance
@@ -21,13 +25,17 @@ from app.schemas.student_full import StudentCreateFull
 from app.core.dependencies import get_current_user, require_president_or_supervisor, require_president_or_admin, require_teacher_or_above
 from app.core.multi_tenancy import get_president_id_for_user
 from app.core.security import get_password_hash
+from app.core.config import settings
+from app.services.profile_images import (
+    MAX_PROFILE_IMAGE_BYTES,
+    remove_student_profile_image,
+    store_student_profile_image,
+)
 
 import logging
 logger = logging.getLogger(__name__)
 
 studentRouter = APIRouter()
-
-
 def map_student_to_response(student: Student) -> StudentResponse:
     """Helper to map DB Student model to nested StudentResponse"""
     
@@ -108,6 +116,7 @@ def map_student_to_response(student: Student) -> StudentResponse:
     return StudentResponse(
         id=student.id,
         user_id=student.user.id,
+        photo=f"{settings.API_V1_PREFIX}/students/{student.id}/photo" if student.profile_image else None,
         personalInfo=personal_info,
         accountInfo=account_info,
         contactInfo=contact_info,
@@ -127,6 +136,53 @@ def map_student_to_response(student: Student) -> StudentResponse:
         guardian_email=student.guardian_email,
         golden=student.Golden,
         is_active=student.user.is_active
+    )
+
+
+def _ensure_photo_manager(current_user) -> None:
+    if not isinstance(current_user, Admin) and current_user.role not in {
+        UserRoleEnum.PRESIDENT, UserRoleEnum.SUPERVISOR, UserRoleEnum.CHIEF_SUPERVISOR
+    }:
+        raise HTTPException(status_code=403, detail="You cannot manage student profile images")
+
+
+async def _get_photo_student(student_id: int, db: AsyncSession, current_user, school_id: int | None) -> Student:
+    _ensure_photo_manager(current_user)
+    result = await db.execute(
+        select(Student)
+        .options(
+            selectinload(Student.user),
+            selectinload(Student.participations).selectinload(SessionParticipation.lecture),
+        )
+        .where(Student.id == student_id)
+    )
+    student = result.scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    president_id = await get_president_id_for_user(current_user, db, school_id)
+    if student.president_id != president_id:
+        raise HTTPException(status_code=404, detail="Student not found")
+    return student
+
+
+@studentRouter.get("/{student_id}/photo")
+async def get_student_photo(
+    student_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+    school_id: int | None = None,
+):
+    student = await _get_photo_student(student_id, db, current_user, school_id)
+    if not student.profile_image:
+        raise HTTPException(status_code=404, detail="Student has no profile image")
+    upload_root = Path(settings.UPLOAD_DIR).resolve()
+    image_path = (upload_root / student.profile_image).resolve()
+    if not image_path.is_relative_to(upload_root) or not image_path.is_file():
+        raise HTTPException(status_code=404, detail="Student profile image not found")
+    return FileResponse(
+        image_path,
+        media_type="image/webp",
+        headers={"Cache-Control": "private, no-store"},
     )
 
 
@@ -230,6 +286,60 @@ async def create_student(
     logger.info(f"Student created: {new_student.id} by user {current_user.id}")
 
     return map_student_to_response(loaded_student)
+
+
+@studentRouter.post("/{student_id}/photo", response_model=StudentResponse)
+async def upload_student_photo(
+    student_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+    school_id: int | None = None,
+):
+    """Upload a validated student profile image for the current school."""
+    student = await _get_photo_student(student_id, db, current_user, school_id)
+
+    allowed_types = {"image/png", "image/jpeg", "image/webp"}
+    if file.content_type and file.content_type not in allowed_types:
+        raise HTTPException(status_code=415, detail="Upload a PNG, JPG, JPEG, or WebP image")
+    contents = bytearray()
+    while chunk := await file.read(64 * 1024):
+        contents.extend(chunk)
+        if len(contents) > MAX_PROFILE_IMAGE_BYTES:
+            raise HTTPException(status_code=413, detail="Image must be 2 MB or smaller")
+    if not contents:
+        raise HTTPException(status_code=400, detail="The uploaded image is empty")
+
+    try:
+        stored_path = await run_in_threadpool(store_student_profile_image, bytes(contents), student_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    old_path = student.profile_image
+    student.profile_image = stored_path
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        await run_in_threadpool(remove_student_profile_image, stored_path)
+        raise
+    await run_in_threadpool(remove_student_profile_image, old_path)
+    await db.refresh(student)
+    logger.info("Student %s profile image updated by user %s", student_id, current_user.id)
+    return map_student_to_response(student)
+
+
+@studentRouter.delete("/{student_id}/photo", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_student_photo(
+    student_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+    school_id: int | None = None,
+):
+    student = await _get_photo_student(student_id, db, current_user, school_id)
+    old_path = student.profile_image
+    student.profile_image = None
+    await db.commit()
+    await run_in_threadpool(remove_student_profile_image, old_path)
 
 
 @studentRouter.get("/", response_model=StudentList)
@@ -505,9 +615,11 @@ async def delete_student(
             detail=f"Student with ID {student_id} not found"
         )
 
+    profile_image = student.profile_image
     # Delete the student (will cascade to user due to relationship)
     await db.delete(student)
     await db.commit()
+    await run_in_threadpool(remove_student_profile_image, profile_image)
 
     logger.info(f"Student {student_id} deleted by user {current_user.id}")
 

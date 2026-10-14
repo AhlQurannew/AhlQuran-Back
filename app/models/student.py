@@ -49,6 +49,7 @@ class Student(Base):
     academic_level: Mapped[Optional[str]] = mapped_column(String(50))
     grade: Mapped[Optional[str]] = mapped_column(String(50))
     school_name: Mapped[Optional[str]] = mapped_column(String(100))
+    profile_image: Mapped[Optional[str]] = mapped_column(String(255))
     
     guardian_id: Mapped[Optional[int]] = mapped_column(Integer)
     

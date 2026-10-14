@@ -121,7 +121,7 @@ async def test_children_list_returns_complete_student_data():
                 first_name="TestGuardian",
                 last_name="Parent",
                 relationship_to_student="Father",
-                student_id=student.id,
+                students=[student],
                 created_at=datetime.now(timezone.utc),
                 created_by_id=president_user.id
             )

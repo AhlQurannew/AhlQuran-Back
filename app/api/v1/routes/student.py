@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.models.user import User, UserRoleEnum
 from app.models.admin import Admin
 from app.models.student import Student
+from app.models.guardian import Guardian
 from app.models.acheivements import Achievement
 from app.models.attendance import Attendance
 from app.models.session import Session
@@ -36,6 +37,30 @@ import logging
 logger = logging.getLogger(__name__)
 
 studentRouter = APIRouter()
+
+
+async def _validate_guardian_link(
+    db: AsyncSession,
+    guardian_id: int | None,
+    president_id: int,
+) -> Guardian | None:
+    if guardian_id is None:
+        return None
+    result = await db.execute(
+        select(Guardian).where(
+            Guardian.id == guardian_id,
+            Guardian.president_id == president_id,
+        )
+    )
+    guardian = result.scalar_one_or_none()
+    if guardian is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Guardian not found or does not belong to your organization",
+        )
+    return guardian
+
+
 def map_student_to_response(student: Student) -> StudentResponse:
     """Helper to map DB Student model to nested StudentResponse"""
     
@@ -195,6 +220,9 @@ async def create_student(
 ):
     # Get president ID (works for both presidents, supervisors, and admins)
     president_id = await get_president_id_for_user(current_user, db, school_id)
+    guardian = await _validate_guardian_link(
+        db, student_data.guardian.guardian_id, president_id
+    )
     
     # Check if email already exists
     result = await db.execute(
@@ -223,13 +251,16 @@ async def create_student(
 
     # Create student record with president_id
     # Construct parent name from guardian info
-    parent_name = f"{student_data.guardian.first_name or ''} {student_data.guardian.last_name or ''}".strip()
+    parent_name = (
+        f"{guardian.first_name} {guardian.last_name}" if guardian else
+        f"{student_data.guardian.first_name or ''} {student_data.guardian.last_name or ''}".strip()
+    )
     
     new_student = Student(
         user_id=new_user.id,
         parent_name=parent_name if parent_name else None,
-        parent_phone=student_data.contactInfo.phone_number,
-        guardian_email=student_data.guardian.email,
+        parent_phone=guardian.phone_number if guardian else student_data.contactInfo.phone_number,
+        guardian_email=guardian.email if guardian else student_data.guardian.email,
         created_by_id=current_user.id,
         president_id=president_id,
         Golden=False,
@@ -253,7 +284,7 @@ async def create_student(
         grade=student_data.formalEducationInfo.grade,
         school_name=student_data.formalEducationInfo.school_name,
         
-        guardian_id=student_data.guardian.guardian_id
+        guardian_id=guardian.id if guardian else None
     )
 
     db.add(new_student)
@@ -491,14 +522,16 @@ async def update_student_full(
     This endpoint accepts the same schema as POST for full updates.
     """
     
-    # Get existing student with all relationships
+    president_id = await get_president_id_for_user(current_user, db)
+
+    # Scope the update and guardian assignment to the current organization.
     result = await db.execute(
         select(Student)
         .options(
             selectinload(Student.user),
             selectinload(Student.participations).selectinload(SessionParticipation.lecture)
         )
-        .where(Student.id == student_id)
+        .where(Student.id == student_id, Student.president_id == president_id)
     )
     student = result.scalar_one_or_none()
 
@@ -507,6 +540,10 @@ async def update_student_full(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Student with ID {student_id} not found"
         )
+
+    guardian = await _validate_guardian_link(
+        db, student_data.guardian.guardian_id, president_id
+    )
 
     # Check if email is being changed and if new email is already taken by another user
     if student_data.contactInfo.email != student.user.email:
@@ -550,10 +587,14 @@ async def update_student_full(
     student.parent_phone = student_data.contactInfo.phone_number
 
     # Update Guardian Info
-    parent_name = f"{student_data.guardian.first_name or ''} {student_data.guardian.last_name or ''}".strip()
+    parent_name = (
+        f"{guardian.first_name} {guardian.last_name}" if guardian else
+        f"{student_data.guardian.first_name or ''} {student_data.guardian.last_name or ''}".strip()
+    )
     student.parent_name = parent_name if parent_name else None
-    student.guardian_email = student_data.guardian.email
-    student.guardian_id = student_data.guardian.guardian_id
+    student.guardian_email = guardian.email if guardian else student_data.guardian.email
+    student.parent_phone = guardian.phone_number if guardian else student_data.contactInfo.phone_number
+    student.guardian_id = guardian.id if guardian else None
 
     # Update Formal Education Info
     student.academic_level = student_data.formalEducationInfo.academic_level

@@ -62,7 +62,7 @@ async def _load_settings_user(db: AsyncSession, user_id: int) -> User:
             selectinload(User.president),
             selectinload(User.supervisor).selectinload(Supervisor.president),
             selectinload(User.teacher).selectinload(Teacher.president),
-            selectinload(User.guardian).selectinload(Guardian.student).selectinload(Student.user),
+            selectinload(User.guardian).selectinload(Guardian.students).selectinload(Student.user),
             selectinload(User.student),
         ).where(User.id == user_id).execution_options(populate_existing=True)
     )
@@ -795,7 +795,11 @@ def _profile_payload(account: User | Admin) -> dict:
             "address": guardian.address if guardian else None,
             "relationship": guardian.relationship_to_student if guardian else None,
             "date_of_birth": guardian.date_of_birth if guardian else None,
-            "linked_student": ({"id": guardian.student.id, "name": f"{guardian.student.user.firstname} {guardian.student.user.lastname}"} if guardian and guardian.student and guardian.student.user else None),
+            "linked_students": [
+                {"id": student.id, "name": f"{student.user.firstname} {student.user.lastname}"}
+                for student in guardian.students
+                if student.user
+            ] if guardian else [],
         })
     elif account.role == UserRoleEnum.STUDENT:
         student = account.student

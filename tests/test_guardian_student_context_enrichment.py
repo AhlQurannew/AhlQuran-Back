@@ -109,7 +109,7 @@ async def test_achievement_response_includes_student_context(
     # Setup: Create guardian-student link
     guardian = Guardian(
         user_id=guardian_user.id,
-        student_id=student.id,
+        students=[student],
         president_id=president_id
     )
     db_session.add(guardian)
@@ -269,7 +269,7 @@ async def test_attendance_response_includes_student_context(
     # Setup: Create guardian-student link
     guardian = Guardian(
         user_id=guardian_user.id,
-        student_id=student.id,
+        students=[student],
         president_id=president_id
     )
     db_session.add(guardian)

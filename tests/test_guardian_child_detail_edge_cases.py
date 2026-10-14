@@ -80,7 +80,7 @@ async def test_multi_tenancy_isolation():
             await db_session.flush()
             
             guardian = Guardian(user_id=g_user.id, president_id=p1.id, first_name="G", last_name="T",
-                              relationship_to_student="F", student_id=s1.id, created_at=datetime.now(timezone.utc),
+                              relationship_to_student="F", students=[s1], created_at=datetime.now(timezone.utc),
                               created_by_id=p1_user.id)
             db_session.add(guardian)
             await db_session.commit()

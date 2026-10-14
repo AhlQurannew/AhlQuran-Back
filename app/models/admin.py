@@ -13,6 +13,7 @@ class Admin(Base):
     password_hash: Mapped[str] = mapped_column("password", String)
     
     role : Mapped[str] = mapped_column(String, default="admin")
+    auth_version: Mapped[int] = mapped_column(default=0, server_default="0", nullable=False)
 
     created_by_id: Mapped[Optional[int]] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True) , default=lambda: datetime.now(timezone.utc))

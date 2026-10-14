@@ -24,6 +24,7 @@ from app.models import (
     Session, SessionParticipation, ParticipationStatus,
     Achievement, Lecture, WeeklySchedule, Message
 )
+from app.models.account_preference import AccountPreference
 from app.models.attendance import Attendance
 from app.models.teacher_attendance import TeacherAttendance
 

@@ -14,6 +14,7 @@ from app.models.lecture import Lecture, WeeklySchedule
 from app.models.message import Message
 from app.models.attendance import Attendance, AttendanceStatus
 from app.models.teacher_attendance import TeacherAttendance
+from app.models.account_preference import AccountPreference
 
 __all__ = [
     "User",

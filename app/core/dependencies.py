@@ -77,6 +77,9 @@ async def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        if payload.get("ver", 0) != admin.auth_version:
+            raise HTTPException(status_code=401, detail="Session expired; sign in again")
+
         return admin
 
     # For user tokens
@@ -99,6 +102,9 @@ async def get_current_user(
             detail="User not found",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    if payload.get("ver", 0) != user.auth_version:
+        raise HTTPException(status_code=401, detail="Session expired; sign in again")
 
     if not user.is_active:
         raise HTTPException(

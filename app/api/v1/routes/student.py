@@ -3,7 +3,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
@@ -20,10 +20,16 @@ from app.schemas.student import (
     PersonalInfo, AccountInfo, ContactInfo, GuardianInfo, 
     LectureInfo, FormalEducationInfo, MedicalInfo, SubscriptionInfo
 )
-from app.schemas.achievement import AchievementCreate, AchievementUpdate, AchievementResponse, AchievementList
+from app.schemas.achievement import AchievementCreate, AchievementBulkCreate, AchievementUpdate, AchievementResponse, AchievementList
 from app.schemas.attendance import AttendanceCreate, AttendanceUpdate, AttendanceResponse, AttendanceList
 from app.schemas.student_full import StudentCreateFull
-from app.core.dependencies import get_current_user, require_president_or_supervisor, require_president_or_admin, require_teacher_or_above
+from app.core.dependencies import (
+    get_current_user,
+    require_president_or_supervisor,
+    require_president_or_admin,
+    require_school_management_access,
+    require_teacher_or_above,
+)
 from app.core.multi_tenancy import get_president_id_for_user
 from app.core.security import get_password_hash
 from app.core.config import settings
@@ -37,6 +43,25 @@ import logging
 logger = logging.getLogger(__name__)
 
 studentRouter = APIRouter()
+
+
+async def _get_accessible_student(
+    student_id: int,
+    current_user,
+    db: AsyncSession,
+    school_id: int | None = None,
+) -> Student:
+    president_id = await get_president_id_for_user(current_user, db, school_id)
+    result = await db.execute(
+        select(Student).where(
+            Student.id == student_id,
+            Student.president_id == president_id,
+        )
+    )
+    student = result.scalar_one_or_none()
+    if student is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
+    return student
 
 
 async def _validate_guardian_link(
@@ -378,6 +403,7 @@ async def list_students(
     skip: int = 0,
     limit: int = 100,
     lecture_id: int = None,
+    search: str | None = None,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(require_president_or_admin),
     school_id: int = None
@@ -392,6 +418,19 @@ async def list_students(
         selectinload(Student.user),
         selectinload(Student.participations).selectinload(SessionParticipation.lecture)
     ).where(Student.president_id == president_id)
+
+    search_term = (search or "").strip()
+    if search_term:
+        pattern = f"%{search_term}%"
+        search_filter = or_(
+            User.firstname.ilike(pattern),
+            User.lastname.ilike(pattern),
+            User.email.ilike(pattern),
+            func.concat(User.firstname, " ", User.lastname).ilike(pattern),
+            Student.first_name_en.ilike(pattern),
+            Student.last_name_en.ilike(pattern),
+        )
+        query = query.join(User, Student.user_id == User.id).where(search_filter)
     
     # If lecture_id is provided, filter students by lecture
     if lecture_id is not None:
@@ -406,6 +445,8 @@ async def list_students(
 
     # Get total count with same filter
     count_query = select(Student).where(Student.president_id == president_id)
+    if search_term:
+        count_query = count_query.join(User, Student.user_id == User.id).where(search_filter)
     if lecture_id is not None:
         count_query = count_query.join(Student.participations).where(
             SessionParticipation.lecture_id == lecture_id
@@ -669,26 +710,93 @@ async def delete_student(
 
 # ==================== ACHIEVEMENT OPERATIONS ====================
 
+@studentRouter.get("/achievements/daily", response_model=AchievementList)
+async def get_daily_lecture_achievements(
+    date: str,
+    lecture_id: int | None = None,
+    school_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_school_management_access),
+):
+    """Fetch one lecture's achievements for a date within the caller's school."""
+    president_id = await get_president_id_for_user(current_user, db, school_id)
+    query = (
+        select(Achievement)
+        .join(Student, Achievement.student_id == Student.id)
+        .where(Student.president_id == president_id, Achievement.date == date)
+    )
+    if lecture_id is not None:
+        query = query.join(
+            SessionParticipation,
+            SessionParticipation.student_id == Student.id,
+        ).where(SessionParticipation.lecture_id == lecture_id).distinct()
+
+    result = await db.execute(query.order_by(Achievement.created_at.desc()))
+    achievements = result.scalars().unique().all()
+    return AchievementList(achievements=achievements, total=len(achievements))
+
+
+@studentRouter.post("/achievements/bulk", response_model=AchievementList, status_code=status.HTTP_201_CREATED)
+async def add_achievements_bulk(
+    achievement_data: AchievementBulkCreate,
+    school_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_school_management_access),
+):
+    """Create the same dated achievement for multiple students atomically."""
+    student_ids = achievement_data.student_ids
+    if len(student_ids) != len(set(student_ids)):
+        raise HTTPException(status_code=400, detail="Duplicate student IDs are not allowed")
+
+    president_id = await get_president_id_for_user(current_user, db, school_id)
+    student_result = await db.execute(
+        select(Student).where(Student.id.in_(student_ids), Student.president_id == president_id)
+    )
+    students = student_result.scalars().all()
+    if len(students) != len(student_ids):
+        raise HTTPException(status_code=404, detail="One or more students were not found in this school")
+
+    if achievement_data.lecture_id is not None:
+        member_result = await db.execute(
+            select(SessionParticipation.student_id)
+            .join(Student, Student.id == SessionParticipation.student_id)
+            .where(
+                SessionParticipation.student_id.in_(student_ids),
+                SessionParticipation.lecture_id == achievement_data.lecture_id,
+                Student.president_id == president_id,
+            )
+            .distinct()
+        )
+        lecture_student_ids = set(member_result.scalars().all())
+        if lecture_student_ids != set(student_ids):
+            raise HTTPException(status_code=400, detail="All selected students must belong to the selected lecture")
+
+    values = achievement_data.model_dump(exclude={"student_ids", "lecture_id"})
+    records = [
+        Achievement(student_id=student_id, president_id=president_id, **values)
+        for student_id in student_ids
+    ]
+    db.add_all(records)
+    await db.flush()
+    record_ids = [record.id for record in records]
+    await db.commit()
+    saved_result = await db.execute(
+        select(Achievement).where(Achievement.id.in_(record_ids)).order_by(Achievement.id)
+    )
+    saved_records = saved_result.scalars().all()
+    return AchievementList(achievements=saved_records, total=len(saved_records))
+
 @studentRouter.post("/{student_id}/achievements", response_model=AchievementResponse, status_code=status.HTTP_201_CREATED)
 async def add_achievement(
     student_id: int,
     achievement_data: AchievementCreate,
+    school_id: int | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
 ):
     """Add an achievement/progress record for a student."""
 
-    # Verify student exists
-    result = await db.execute(
-        select(Student).where(Student.id == student_id)
-    )
-    student = result.scalar_one_or_none()
-
-    if not student:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Student with ID {student_id} not found"
-        )
+    student = await _get_accessible_student(student_id, current_user, db, school_id)
 
     # Validate achievement data belongs to the correct student
     if achievement_data.student_id != student_id:
@@ -698,7 +806,7 @@ async def add_achievement(
         )
 
     # Get president_id from current user (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = student.president_id
     
     # Create achievement record
     new_achievement = Achievement(
@@ -728,22 +836,13 @@ async def get_student_achievements(
     skip: int = 0,
     limit: int = 100,
     date: str = None,
+    school_id: int | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user=Depends(require_school_management_access)
 ):
     """Get all achievements for a specific student, optionally filtered by date."""
 
-    # Verify student exists
-    result = await db.execute(
-        select(Student).where(Student.id == student_id)
-    )
-    student = result.scalar_one_or_none()
-
-    if not student:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Student with ID {student_id} not found"
-        )
+    await _get_accessible_student(student_id, current_user, db, school_id)
 
     # Build query with optional date filter
     query = select(Achievement).where(Achievement.student_id == student_id)
@@ -761,7 +860,7 @@ async def get_student_achievements(
     achievements = achievements_result.scalars().all()
 
     # Get total count with same filter
-    count_query = select(Achievement).where(Achievement.student_id == student_id)
+    count_query = select(Achievement.id).where(Achievement.student_id == student_id)
     if date:
         count_query = count_query.where(Achievement.date == date)
     
@@ -777,10 +876,12 @@ async def update_achievement(
     achievement_id: int,
     achievement_data: AchievementUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Update an achievement record."""
 
+    await _get_accessible_student(student_id, current_user, db, school_id)
     result = await db.execute(
         select(Achievement).where(
             Achievement.id == achievement_id,
@@ -813,10 +914,12 @@ async def delete_achievement(
     student_id: int,
     achievement_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Delete an achievement record."""
 
+    await _get_accessible_student(student_id, current_user, db, school_id)
     result = await db.execute(
         select(Achievement).where(
             Achievement.id == achievement_id,

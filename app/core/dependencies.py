@@ -243,3 +243,24 @@ async def require_president_or_admin(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="This action requires president or administrator privileges"
     )
+
+
+async def require_school_management_access(
+    current_user=Depends(get_current_user),
+):
+    """Allow school managers and admins acting within an explicitly selected school."""
+    from app.models.admin import Admin
+
+    if isinstance(current_user, Admin):
+        return current_user
+    allowed = {
+        UserRoleEnum.PRESIDENT,
+        UserRoleEnum.SUPERVISOR,
+        UserRoleEnum.CHIEF_SUPERVISOR,
+    }
+    if getattr(current_user, "role", None) in allowed:
+        return current_user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="This action requires school management privileges",
+    )

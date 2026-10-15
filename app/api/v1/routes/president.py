@@ -25,7 +25,8 @@ from app.schemas.statistics import (
     StatsSummaryResponse,
     AttendanceRecordResponse,
     MemorizationRecordResponse,
-    LectureDistributionResponse
+    LectureDistributionResponse,
+    AttendanceStatisticsResponse,
 )
 from app.core.dependencies import require_president, require_president_or_admin
 
@@ -308,7 +309,7 @@ async def get_statistics_summary(
     total_lectures = total_lectures_result.scalar() or 0
     
     # Students present today - date is stored as string in DD-MM-YYYY format
-    today_str = datetime.now().strftime("%d-%m-%Y")
+    today_str = datetime.now().date()
     present_today_result = await db.execute(
         select(func.count(func.distinct(Attendance.student_id)))
         .join(Student, Attendance.student_id == Student.id)
@@ -351,7 +352,7 @@ async def get_attendance_trend(
     """Get attendance trend over recent days"""
     president_id = await get_current_president_id(current_user, db, school_id)
     
-    # Get unique dates with attendance records (date is string DD-MM-YYYY)
+    # Get unique calendar dates with attendance records.
     dates_result = await db.execute(
         select(Attendance.date)
         .join(Student, Attendance.student_id == Student.id)
@@ -400,6 +401,98 @@ async def get_attendance_trend(
         })
     
     return attendance_data
+
+
+@presidentRouter.get("/statistics/attendance", response_model=AttendanceStatisticsResponse)
+async def get_attendance_statistics(
+    lecture_id: int,
+    start_date: date,
+    end_date: date,
+    student_id: int | None = None,
+    school_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_president_or_admin),
+):
+    if start_date > end_date:
+        raise HTTPException(status_code=422, detail="start_date must be on or before end_date")
+
+    president_id = await get_current_president_id(current_user, db, school_id)
+    lecture_result = await db.execute(
+        select(Lecture.id).where(Lecture.id == lecture_id, Lecture.president_id == president_id)
+    )
+    if lecture_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Lecture not found")
+
+    if student_id is not None:
+        enrollment_result = await db.execute(
+            select(SessionParticipation.id)
+            .join(Student, Student.id == SessionParticipation.student_id)
+            .where(
+                SessionParticipation.lecture_id == lecture_id,
+                SessionParticipation.student_id == student_id,
+                Student.president_id == president_id,
+            )
+            .limit(1)
+        )
+        if enrollment_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Student is not enrolled in this lecture")
+
+    grouped_result = await db.execute(
+        select(Attendance.date, Attendance.status, func.count(Attendance.id))
+        .join(Student, Student.id == Attendance.student_id)
+        .where(
+            Attendance.president_id == president_id,
+            Student.president_id == president_id,
+            Attendance.lecture_id == lecture_id,
+            Attendance.date >= start_date,
+            Attendance.date <= end_date,
+            *([Attendance.student_id == student_id] if student_id is not None else []),
+        )
+        .group_by(Attendance.date, Attendance.status)
+        .order_by(Attendance.date)
+    )
+
+    status_totals = {"present": 0, "late": 0, "absent": 0, "excused": 0}
+    daily_map: dict[date, dict[str, int]] = {}
+    for attendance_date, status_value, count in grouped_result.all():
+        status_key = status_value.value if hasattr(status_value, "value") else str(status_value)
+        if status_key not in status_totals:
+            continue
+        status_totals[status_key] += count
+        daily_map.setdefault(attendance_date, {"present": 0, "late": 0, "absent": 0, "excused": 0})[status_key] += count
+
+    total = sum(status_totals.values())
+    daily = []
+    for day, counts in sorted(daily_map.items()):
+        daily.append({"date": day, **counts, "total": sum(counts.values())})
+
+    legacy_result = await db.execute(
+        select(func.count(Attendance.id))
+        .join(Student, Student.id == Attendance.student_id)
+        .where(
+            Attendance.president_id == president_id,
+            Student.president_id == president_id,
+            Attendance.lecture_id.is_(None),
+            Attendance.date >= start_date,
+            Attendance.date <= end_date,
+            *([Attendance.student_id == student_id] if student_id is not None else []),
+        )
+    )
+    percentages = {
+        key: round(value * 100 / total, 1) if total else 0.0
+        for key, value in status_totals.items()
+    }
+    return {
+        "lecture_id": lecture_id,
+        "student_id": student_id,
+        "start_date": start_date,
+        "end_date": end_date,
+        **status_totals,
+        "total": total,
+        "percentages": percentages,
+        "daily": daily,
+        "unassigned_legacy_count": legacy_result.scalar() or 0,
+    }
 
 
 @presidentRouter.get("/statistics/top-memorizers", response_model=list[MemorizationRecordResponse])

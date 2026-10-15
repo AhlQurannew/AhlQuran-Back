@@ -1,7 +1,7 @@
-from sqlalchemy import String, DateTime, ForeignKey, Integer, Text, Enum as SQLEnum, Date
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, Text, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
-from datetime import datetime, timezone
+from datetime import date as date_type, datetime, timezone
 from typing import Optional
 from enum import Enum
 
@@ -24,8 +24,10 @@ class Attendance(Base):
     
     # Multi-tenancy: Link to president
     president_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("presidents.id", ondelete="CASCADE"), nullable=True, index=True)
-    
-    date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)  # Format: DD-MM-YYYY
+
+    lecture_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("lectures.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    date: Mapped[date_type] = mapped_column(Date, nullable=False, index=True)
     status: Mapped[AttendanceStatus] = mapped_column(
         SQLEnum(AttendanceStatus, values_callable=lambda x: [e.value for e in x]),
         default=AttendanceStatus.PRESENT,
@@ -43,6 +45,7 @@ class Attendance(Base):
         "Student",
         foreign_keys=[student_id]
     )
+    lecture: Mapped[Optional["Lecture"]] = relationship("Lecture")
 
     def __repr__(self) -> str:
-        return f"Attendance(id={self.id}, student_id={self.student_id}, date={self.date}, status={self.status})"
+        return f"Attendance(id={self.id}, student_id={self.student_id}, lecture_id={self.lecture_id}, date={self.date}, status={self.status})"

@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
+from datetime import date
 from app.db.session import get_db
 from app.models.user import User, UserRoleEnum
 from app.models.teacher import Teacher
@@ -268,7 +269,7 @@ async def get_my_student_detail(
         )
         .where(Student.id == student_id)
     )
-    student = student_result.scalar_one_or_none()
+    student = student_result.scalars().first()
     
     if not student:
         raise HTTPException(
@@ -881,11 +882,12 @@ async def create_student_attendance_as_teacher(
         .join(Lecture.teachers)
         .where(
             Student.id == student_id,
+            SessionParticipation.lecture_id == attendance_data.lecture_id,
             Teacher.id == teacher.id,
             Student.president_id == president_id
         )
     )
-    student = student_result.scalar_one_or_none()
+    student = student_result.scalars().first()
     
     if not student:
         raise HTTPException(
@@ -904,6 +906,7 @@ async def create_student_attendance_as_teacher(
     existing_result = await db.execute(
         select(Attendance).where(
             Attendance.student_id == student_id,
+            Attendance.lecture_id == attendance_data.lecture_id,
             Attendance.date == attendance_data.date,
             Attendance.president_id == president_id
         )
@@ -922,6 +925,7 @@ async def create_student_attendance_as_teacher(
     # Create new attendance record with president_id
     new_attendance = Attendance(
         student_id=student_id,
+        lecture_id=attendance_data.lecture_id,
         president_id=president_id,
         date=attendance_data.date,
         status=attendance_data.status,
@@ -940,7 +944,8 @@ async def create_student_attendance_as_teacher(
 @teacherRouter.get("/my-students/{student_id}/attendance", response_model=AttendanceList)
 async def get_student_attendance_as_teacher(
     student_id: int,
-    date: str = None,
+    lecture_id: int,
+    date: date | None = None,
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
@@ -965,7 +970,7 @@ async def get_student_attendance_as_teacher(
     
     president_id = teacher.president_id
     
-    # Verify student exists and is in one of the teacher's lectures
+    # Verify student exists and is in the requested teacher-owned lecture.
     student_result = await db.execute(
         select(Student)
         .join(SessionParticipation, Student.id == SessionParticipation.student_id)
@@ -973,11 +978,12 @@ async def get_student_attendance_as_teacher(
         .join(Lecture.teachers)
         .where(
             Student.id == student_id,
+            SessionParticipation.lecture_id == lecture_id,
             Teacher.id == teacher.id,
             Student.president_id == president_id
         )
     )
-    student = student_result.scalar_one_or_none()
+    student = student_result.scalars().first()
     
     if not student:
         raise HTTPException(
@@ -988,7 +994,8 @@ async def get_student_attendance_as_teacher(
     # Build query with president_id filter
     query = select(Attendance).where(
         Attendance.student_id == student_id,
-        Attendance.president_id == president_id
+        Attendance.president_id == president_id,
+        Attendance.lecture_id == lecture_id,
     )
     
     # Filter by date if provided
@@ -1004,7 +1011,8 @@ async def get_student_attendance_as_teacher(
     # Get total count with president_id filter
     count_query = select(Attendance).where(
         Attendance.student_id == student_id,
-        Attendance.president_id == president_id
+        Attendance.president_id == president_id,
+        Attendance.lecture_id == lecture_id,
     )
     if date:
         count_query = count_query.where(Attendance.date == date)
@@ -1042,40 +1050,28 @@ async def update_student_attendance_as_teacher(
     
     president_id = teacher.president_id
     
-    # Verify student exists and is in one of the teacher's lectures
+    # Resolve the attendance record only when its lecture is assigned to this teacher.
     student_result = await db.execute(
-        select(Student)
+        select(Attendance)
+        .join(Student, Attendance.student_id == Student.id)
         .join(SessionParticipation, Student.id == SessionParticipation.student_id)
         .join(Lecture, SessionParticipation.lecture_id == Lecture.id)
         .join(Lecture.teachers)
         .where(
             Student.id == student_id,
+            Attendance.id == attendance_id,
+            Attendance.student_id == Student.id,
+            Attendance.lecture_id == Lecture.id,
+            Attendance.president_id == president_id,
             Teacher.id == teacher.id,
             Student.president_id == president_id
         )
     )
-    student = student_result.scalar_one_or_none()
-    
-    if not student:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Student with ID {student_id} not found in your lectures"
-        )
-    
-    # Get the attendance record with president_id filter
-    result = await db.execute(
-        select(Attendance).where(
-            Attendance.id == attendance_id,
-            Attendance.student_id == student_id,
-            Attendance.president_id == president_id
-        )
-    )
-    attendance = result.scalar_one_or_none()
-    
+    attendance = student_result.scalars().first()
     if not attendance:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Attendance with ID {attendance_id} not found for student {student_id}"
+            detail=f"Attendance with ID {attendance_id} not found in your lectures"
         )
     
     # Update fields
@@ -1117,35 +1113,23 @@ async def delete_student_attendance_as_teacher(
     
     president_id = teacher.president_id
     
-    # Verify student exists and is in one of the teacher's lectures
-    student_result = await db.execute(
-        select(Student)
-        .join(SessionParticipation, Student.id == SessionParticipation.student_id)
+    result = await db.execute(
+        select(Attendance)
+        .join(Student, Attendance.student_id == Student.id)
+        .join(SessionParticipation, SessionParticipation.student_id == Student.id)
         .join(Lecture, SessionParticipation.lecture_id == Lecture.id)
         .join(Lecture.teachers)
         .where(
             Student.id == student_id,
+            Attendance.id == attendance_id,
+            Attendance.student_id == Student.id,
+            Attendance.lecture_id == Lecture.id,
+            Attendance.president_id == president_id,
             Teacher.id == teacher.id,
             Student.president_id == president_id
         )
     )
-    student = student_result.scalar_one_or_none()
-    
-    if not student:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Student with ID {student_id} not found in your lectures"
-        )
-    
-    # Get the attendance record with president_id filter
-    result = await db.execute(
-        select(Attendance).where(
-            Attendance.id == attendance_id,
-            Attendance.student_id == student_id,
-            Attendance.president_id == president_id
-        )
-    )
-    attendance = result.scalar_one_or_none()
+    attendance = result.scalars().first()
     
     if not attendance:
         raise HTTPException(

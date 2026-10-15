@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field
+from datetime import date as DateType
 from typing import List
 
 
@@ -17,7 +18,7 @@ class StatsSummaryResponse(BaseModel):
 
 class AttendanceRecordResponse(BaseModel):
     """Attendance trend record response"""
-    date: str = Field(..., description="Date in DD-MM-YYYY format")
+    date: DateType = Field(..., description="Calendar date in ISO format")
     present: int = Field(..., description="Number of students present")
     absent: int = Field(..., description="Number of students absent")
     total: int = Field(..., description="Total students counted")
@@ -25,6 +26,30 @@ class AttendanceRecordResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class AttendanceDailyBreakdown(BaseModel):
+    date: DateType
+    present: int
+    late: int
+    absent: int
+    excused: int
+    total: int
+
+
+class AttendanceStatisticsResponse(BaseModel):
+    lecture_id: int
+    student_id: int | None = None
+    start_date: DateType
+    end_date: DateType
+    present: int
+    late: int
+    absent: int
+    excused: int
+    total: int
+    percentages: dict[str, float]
+    daily: list[AttendanceDailyBreakdown]
+    unassigned_legacy_count: int
 
 
 class MemorizationRecordResponse(BaseModel):

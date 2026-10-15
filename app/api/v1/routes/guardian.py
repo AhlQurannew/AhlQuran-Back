@@ -26,7 +26,7 @@ from app.core.dependencies import require_guardian, require_president_or_supervi
 from app.core.security import get_password_hash
 from app.core.multi_tenancy import get_president_id_for_user
 from typing import Tuple, List, Optional
-from datetime import datetime
+from datetime import date, datetime
 from fastapi import Query
 import logging
 import math
@@ -270,8 +270,8 @@ async def get_attendance_for_student(
     db: AsyncSession,
     student_id: int,
     president_id: int,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
     skip: int = 0,
     limit: int = 50
 ) -> Tuple[List[Attendance], int]:
@@ -282,8 +282,8 @@ async def get_attendance_for_student(
         db: Database session
         student_id: The student's ID
         president_id: The president_id for multi-tenancy filtering
-        start_date: Optional start date filter (DD-MM-YYYY format)
-        end_date: Optional end date filter (DD-MM-YYYY format)
+        start_date: Optional inclusive ISO date filter
+        end_date: Optional inclusive ISO date filter
         skip: Number of records to skip (for pagination)
         limit: Maximum number of records to return
     
@@ -305,7 +305,6 @@ async def get_attendance_for_student(
         
         # Add date range filtering if provided
         if start_date:
-            # Since dates are stored as strings in DD-MM-YYYY format
             query = query.where(Attendance.date >= start_date)
         
         if end_date:
@@ -745,8 +744,8 @@ async def get_student_achievements(
 @guardianRouter.get("/students/{student_id}/attendance", response_model=PaginatedAttendanceResponse)
 async def get_student_attendance(
     student_id: int,
-    start_date: Optional[str] = Query(None, description="Start date filter in DD-MM-YYYY format"),
-    end_date: Optional[str] = Query(None, description="End date filter in DD-MM-YYYY format"),
+    start_date: Optional[date] = Query(None, description="Inclusive ISO start date"),
+    end_date: Optional[date] = Query(None, description="Inclusive ISO end date"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=100, description="Number of items per page"),
     db: AsyncSession = Depends(get_db),
@@ -765,8 +764,8 @@ async def get_student_attendance(
     
     Args:
         student_id: The ID of the student to retrieve attendance for
-        start_date: Optional start date filter (DD-MM-YYYY format)
-        end_date: Optional end date filter (DD-MM-YYYY format)
+        start_date: Optional inclusive ISO date filter
+        end_date: Optional inclusive ISO date filter
         page: Page number (1-indexed, default: 1)
         page_size: Number of items per page (default: 50, max: 100)
         db: Database session
@@ -844,6 +843,7 @@ async def get_student_attendance(
                     id=attendance.id,
                     student=student_context,
                     date=attendance.date,
+                    lecture_id=attendance.lecture_id,
                     status=attendance.status.value,
                     notes=attendance.notes
                 )

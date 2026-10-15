@@ -5,6 +5,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
+from datetime import date
 
 from app.db.session import get_db
 from app.models.user import User, UserRoleEnum
@@ -14,6 +15,8 @@ from app.models.guardian import Guardian
 from app.models.acheivements import Achievement
 from app.models.attendance import Attendance
 from app.models.session import Session
+from app.models.lecture import Lecture
+from app.models.teacher import Teacher
 from app.models.sessionParticipation import SessionParticipation
 from app.schemas.student import (
     StudentCreate, StudentUpdate, StudentResponse, StudentList,
@@ -21,7 +24,7 @@ from app.schemas.student import (
     LectureInfo, FormalEducationInfo, MedicalInfo, SubscriptionInfo
 )
 from app.schemas.achievement import AchievementCreate, AchievementBulkCreate, AchievementUpdate, AchievementResponse, AchievementList
-from app.schemas.attendance import AttendanceCreate, AttendanceUpdate, AttendanceResponse, AttendanceList
+from app.schemas.attendance import AttendanceCreate, AttendanceUpdate, AttendanceResponse, AttendanceList, AttendanceBulkSave
 from app.schemas.student_full import StudentCreateFull
 from app.core.dependencies import (
     get_current_user,
@@ -84,6 +87,23 @@ async def _validate_guardian_link(
             detail="Guardian not found or does not belong to your organization",
         )
     return guardian
+
+
+async def _ensure_teacher_owns_lecture(
+    current_user: User,
+    lecture_id: int,
+    db: AsyncSession,
+) -> None:
+    if getattr(current_user, "role", None) != UserRoleEnum.TEACHER:
+        return
+    result = await db.execute(
+        select(Lecture.id)
+        .join(Lecture.teachers)
+        .where(Lecture.id == lecture_id, Teacher.user_id == current_user.id)
+        .limit(1)
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=403, detail="You do not teach this lecture")
 
 
 def map_student_to_response(student: Student) -> StudentResponse:
@@ -945,6 +965,108 @@ async def delete_achievement(
 
 # ==================== ATTENDANCE OPERATIONS ====================
 
+@studentRouter.get("/attendance/lectures/{lecture_id}/daily", response_model=AttendanceList)
+async def get_lecture_daily_attendance(
+    lecture_id: int,
+    date: date,
+    school_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_school_management_access),
+):
+    president_id = await get_president_id_for_user(current_user, db, school_id)
+    lecture_result = await db.execute(
+        select(Lecture.id).where(Lecture.id == lecture_id, Lecture.president_id == president_id)
+    )
+    if lecture_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Lecture not found")
+
+    result = await db.execute(
+        select(Attendance)
+        .join(Student, Attendance.student_id == Student.id)
+        .where(
+            Attendance.lecture_id == lecture_id,
+            Attendance.date == date,
+            Attendance.president_id == president_id,
+            Student.president_id == president_id,
+        )
+        .order_by(Attendance.student_id)
+    )
+    records = result.scalars().all()
+    return AttendanceList(attendances=records, total=len(records))
+
+
+@studentRouter.put("/attendance/lectures/{lecture_id}/daily", response_model=AttendanceList)
+async def save_lecture_daily_attendance(
+    lecture_id: int,
+    payload: AttendanceBulkSave,
+    school_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_school_management_access),
+):
+    president_id = await get_president_id_for_user(current_user, db, school_id)
+    student_ids = [record.student_id for record in payload.records]
+    if len(student_ids) != len(set(student_ids)):
+        raise HTTPException(status_code=400, detail="Duplicate student IDs are not allowed")
+
+    lecture_result = await db.execute(
+        select(Lecture.id).where(Lecture.id == lecture_id, Lecture.president_id == president_id)
+    )
+    if lecture_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Lecture not found")
+
+    if student_ids:
+        enrolled_result = await db.execute(
+            select(SessionParticipation.student_id)
+            .join(Student, Student.id == SessionParticipation.student_id)
+            .where(
+                SessionParticipation.lecture_id == lecture_id,
+                SessionParticipation.student_id.in_(student_ids),
+                Student.president_id == president_id,
+            )
+            .distinct()
+        )
+        enrolled_ids = set(enrolled_result.scalars().all())
+        if enrolled_ids != set(student_ids):
+            raise HTTPException(status_code=400, detail="One or more students are not enrolled in this lecture")
+
+    existing_result = await db.execute(
+        select(Attendance).where(
+            Attendance.lecture_id == lecture_id,
+            Attendance.date == payload.date,
+            Attendance.president_id == president_id,
+        )
+    )
+    existing_by_student = {record.student_id: record for record in existing_result.scalars().all()}
+    for entry in payload.records:
+        existing = existing_by_student.get(entry.student_id)
+        if entry.status is None:
+            if existing:
+                await db.delete(existing)
+            continue
+        if existing:
+            existing.status = entry.status
+            existing.notes = entry.notes
+        else:
+            db.add(Attendance(
+                student_id=entry.student_id,
+                lecture_id=lecture_id,
+                president_id=president_id,
+                date=payload.date,
+                status=entry.status,
+                notes=entry.notes,
+            ))
+
+    await db.commit()
+    saved_result = await db.execute(
+        select(Attendance).where(
+            Attendance.lecture_id == lecture_id,
+            Attendance.date == payload.date,
+            Attendance.president_id == president_id,
+        ).order_by(Attendance.student_id)
+    )
+    saved = saved_result.scalars().all()
+    return AttendanceList(attendances=saved, total=len(saved))
+
 @studentRouter.post("/{student_id}/attendance", response_model=AttendanceResponse, status_code=status.HTTP_201_CREATED)
 async def create_attendance(
     student_id: int,
@@ -973,6 +1095,19 @@ async def create_attendance(
             detail=f"Student with ID {student_id} not found or not accessible"
         )
 
+    enrollment_result = await db.execute(
+        select(SessionParticipation.id)
+        .join(Lecture, SessionParticipation.lecture_id == Lecture.id)
+        .where(
+            SessionParticipation.student_id == student_id,
+            SessionParticipation.lecture_id == attendance_data.lecture_id,
+            Lecture.president_id == president_id,
+        ).limit(1)
+    )
+    if enrollment_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=400, detail="Student is not enrolled in this lecture")
+    await _ensure_teacher_owns_lecture(current_user, attendance_data.lecture_id, db)
+
     # Validate attendance data belongs to the correct student (if student_id provided)
     if attendance_data.student_id is not None and attendance_data.student_id != student_id:
         raise HTTPException(
@@ -984,6 +1119,7 @@ async def create_attendance(
     existing_result = await db.execute(
         select(Attendance).where(
             Attendance.student_id == student_id,
+            Attendance.lecture_id == attendance_data.lecture_id,
             Attendance.date == attendance_data.date,
             Attendance.president_id == president_id
         )
@@ -1002,6 +1138,7 @@ async def create_attendance(
     # Create new attendance record with president_id
     new_attendance = Attendance(
         student_id=student_id,
+        lecture_id=attendance_data.lecture_id,
         president_id=president_id,
         date=attendance_data.date,
         status=attendance_data.status,
@@ -1020,7 +1157,8 @@ async def create_attendance(
 @studentRouter.get("/{student_id}/attendance", response_model=AttendanceList)
 async def get_student_attendance(
     student_id: int,
-    date: str = None,
+    lecture_id: int,
+    date: date | None = None,
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
@@ -1047,10 +1185,25 @@ async def get_student_attendance(
             detail=f"Student with ID {student_id} not found or not accessible"
         )
 
+    await _ensure_teacher_owns_lecture(current_user, lecture_id, db)
+    enrollment_result = await db.execute(
+        select(SessionParticipation.id)
+        .join(Lecture, SessionParticipation.lecture_id == Lecture.id)
+        .where(
+            SessionParticipation.student_id == student_id,
+            SessionParticipation.lecture_id == lecture_id,
+            Lecture.president_id == president_id,
+        )
+        .limit(1)
+    )
+    if enrollment_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Student is not enrolled in this lecture")
+
     # Build query with president_id filter for multi-tenancy
     query = select(Attendance).where(
         Attendance.student_id == student_id,
-        Attendance.president_id == president_id
+        Attendance.president_id == president_id,
+        Attendance.lecture_id == lecture_id,
     )
     
     # Filter by date if provided
@@ -1066,7 +1219,8 @@ async def get_student_attendance(
     # Get total count with president_id filter
     count_query = select(Attendance).where(
         Attendance.student_id == student_id,
-        Attendance.president_id == president_id
+        Attendance.president_id == president_id,
+        Attendance.lecture_id == lecture_id,
     )
     if date:
         count_query = count_query.where(Attendance.date == date)
@@ -1105,6 +1259,8 @@ async def update_attendance(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Attendance with ID {attendance_id} not found for student {student_id}"
         )
+
+    await _ensure_teacher_owns_lecture(current_user, attendance.lecture_id, db)
 
     # Update fields
     update_data = attendance_data.model_dump(exclude_unset=True)
@@ -1146,6 +1302,8 @@ async def delete_attendance(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Attendance with ID {attendance_id} not found for student {student_id}"
         )
+
+    await _ensure_teacher_owns_lecture(current_user, attendance.lecture_id, db)
 
     await db.delete(attendance)
     await db.commit()

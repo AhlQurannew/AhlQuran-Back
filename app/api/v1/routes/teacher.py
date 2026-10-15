@@ -8,9 +8,9 @@ from app.models.user import User, UserRoleEnum
 from app.models.teacher import Teacher
 from app.models.lecture import Lecture
 from app.schemas.teacher import TeacherCreate, TeacherUpdate, TeacherResponse, TeacherList
-from app.core.dependencies import require_president_or_supervisor, require_teacher, require_president_or_admin
+from app.core.dependencies import require_school_management_access, require_teacher
 from app.core.security import get_password_hash
-from app.core.multi_tenancy import get_president_id_for_user
+from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 import logging
 
 logger = logging.getLogger(__name__)
@@ -402,13 +402,14 @@ async def create_teacher_session():
 async def create_teacher(
     teacher_data: TeacherCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Create a new teacher. Only presidents and supervisors can create teachers."""
     logger.debug(f"teacher data :  {teacher_data} \n current user: {current_user}")
 
     # Get president ID (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
 
     # Check if email already exists
     result = await db.execute(
@@ -440,7 +441,7 @@ async def create_teacher(
         user_id=new_user.id,
         president_id=president_id,
         riwaya=teacher_data.riwaya,
-        created_by_id=current_user.id
+        created_by_id=await get_creator_user_id(current_user, president_id, db)
     )
 
     db.add(new_teacher)
@@ -467,12 +468,13 @@ async def list_teachers(
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Get all teachers. Only presidents and supervisors can view all teachers."""
 
     # Get president ID for filtering (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
 
     result = await db.execute(
         select(Teacher)
@@ -510,12 +512,13 @@ async def list_teachers(
 async def get_teacher(
     teacher_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Get a specific teacher by ID."""
 
     # Get president ID for filtering (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
 
     result = await db.execute(
         select(Teacher)
@@ -547,14 +550,16 @@ async def update_teacher(
     teacher_id: int,
     teacher_data: TeacherUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Update teacher information. Only presidents and supervisors can update teachers."""
 
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     result = await db.execute(
         select(Teacher)
         .options(selectinload(Teacher.user))
-        .where(Teacher.id == teacher_id)
+        .where(Teacher.id == teacher_id, Teacher.president_id == president_id)
     )
     teacher = result.scalar_one_or_none()
     
@@ -609,12 +614,14 @@ async def update_teacher(
 async def delete_teacher(
     teacher_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Delete a teacher. Only presidents and supervisors can delete teachers."""
 
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     result = await db.execute(
-        select(Teacher).where(Teacher.id == teacher_id)
+        select(Teacher).where(Teacher.id == teacher_id, Teacher.president_id == president_id)
     )
     teacher = result.scalar_one_or_none()
     
@@ -649,12 +656,13 @@ async def create_teacher_attendance(
     teacher_id: int,
     attendance_data: TeacherAttendanceCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Create or update attendance record for a teacher on a specific date."""
 
     # Get president ID for filtering (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
 
     # Verify teacher exists and belongs to this president
     result = await db.execute(
@@ -712,12 +720,13 @@ async def get_teacher_attendance(
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Get attendance records for a specific teacher. Optionally filter by date."""
 
     # Get president ID for filtering (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
 
     # Verify teacher exists and belongs to this president
     result = await db.execute(
@@ -767,12 +776,13 @@ async def update_teacher_attendance(
     attendance_id: int,
     attendance_data: TeacherAttendanceUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Update a teacher attendance record."""
 
     # Get president ID for filtering (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
 
     result = await db.execute(
         select(TeacherAttendance).where(
@@ -807,12 +817,13 @@ async def delete_teacher_attendance(
     teacher_id: int,
     attendance_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Delete a teacher attendance record."""
 
     # Get president ID for filtering (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
 
     result = await db.execute(
         select(TeacherAttendance).where(

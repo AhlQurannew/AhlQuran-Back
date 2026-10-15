@@ -28,12 +28,10 @@ from app.schemas.attendance import AttendanceCreate, AttendanceUpdate, Attendanc
 from app.schemas.student_full import StudentCreateFull
 from app.core.dependencies import (
     get_current_user,
-    require_president_or_supervisor,
-    require_president_or_admin,
     require_school_management_access,
-    require_teacher_or_above,
+    require_teacher_or_school_manager,
 )
-from app.core.multi_tenancy import get_president_id_for_user
+from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 from app.core.security import get_password_hash
 from app.core.config import settings
 from app.services.profile_images import (
@@ -56,7 +54,12 @@ async def _get_accessible_student(
 ) -> Student:
     president_id = await get_president_id_for_user(current_user, db, school_id)
     result = await db.execute(
-        select(Student).where(
+        select(Student)
+        .options(
+            selectinload(Student.user),
+            selectinload(Student.participations).selectinload(SessionParticipation.lecture),
+        )
+        .where(
             Student.id == student_id,
             Student.president_id == president_id,
         )
@@ -87,6 +90,25 @@ async def _validate_guardian_link(
             detail="Guardian not found or does not belong to your organization",
         )
     return guardian
+
+
+async def _validate_lecture_links(
+    db: AsyncSession,
+    lecture_ids: list[int],
+    president_id: int,
+) -> None:
+    if len(lecture_ids) != len(set(lecture_ids)):
+        raise HTTPException(status_code=400, detail="Duplicate lecture IDs are not allowed")
+    if not lecture_ids:
+        return
+    result = await db.execute(
+        select(Lecture.id).where(
+            Lecture.id.in_(lecture_ids),
+            Lecture.president_id == president_id,
+        )
+    )
+    if set(result.scalars().all()) != set(lecture_ids):
+        raise HTTPException(status_code=404, detail="One or more lectures were not found in this school")
 
 
 async def _ensure_teacher_owns_lecture(
@@ -260,13 +282,16 @@ async def get_student_photo(
 async def create_student(
     student_data: StudentCreateFull,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_school_management_access),
     school_id: int = None
 ):
     # Get president ID (works for both presidents, supervisors, and admins)
     president_id = await get_president_id_for_user(current_user, db, school_id)
     guardian = await _validate_guardian_link(
         db, student_data.guardian.guardian_id, president_id
+    )
+    await _validate_lecture_links(
+        db, [lecture.lecture_id for lecture in student_data.lectures], president_id
     )
     
     # Check if email already exists
@@ -306,7 +331,7 @@ async def create_student(
         parent_name=parent_name if parent_name else None,
         parent_phone=guardian.phone_number if guardian else student_data.contactInfo.phone_number,
         guardian_email=guardian.email if guardian else student_data.guardian.email,
-        created_by_id=current_user.id,
+        created_by_id=await get_creator_user_id(current_user, president_id, db),
         president_id=president_id,
         Golden=False,
         
@@ -425,7 +450,7 @@ async def list_students(
     lecture_id: int = None,
     search: str | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_school_management_access),
     school_id: int = None
 ):
     """Get all students. Optionally filter by lecture_id. Presidents, supervisors, and admins can view students."""
@@ -484,26 +509,11 @@ async def list_students(
 async def get_student(
     student_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Get a specific student by ID."""
-
-    result = await db.execute(
-        select(Student)
-        .options(
-            selectinload(Student.user),
-            selectinload(Student.participations).selectinload(SessionParticipation.lecture)
-        )
-        .where(Student.id == student_id)
-    )
-    student = result.scalar_one_or_none()
-
-    if not student:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Student with ID {student_id} not found"
-        )
-
+    student = await _get_accessible_student(student_id, current_user, db, school_id)
     return map_student_to_response(student)
 
 
@@ -512,25 +522,11 @@ async def update_student(
     student_id: int,
     student_data: StudentUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Update student information. Only presidents and supervisors can update students."""
-
-    result = await db.execute(
-        select(Student)
-        .options(
-            selectinload(Student.user),
-            selectinload(Student.participations).selectinload(SessionParticipation.lecture)
-        )
-        .where(Student.id == student_id)
-    )
-    student = result.scalar_one_or_none()
-
-    if not student:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Student with ID {student_id} not found"
-        )
+    student = await _get_accessible_student(student_id, current_user, db, school_id)
 
     # Update user fields
     update_data = student_data.model_dump(exclude_unset=True)
@@ -576,14 +572,15 @@ async def update_student_full(
     student_id: int,
     student_data: StudentCreateFull,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """
     Update complete student information with nested structure.
     This endpoint accepts the same schema as POST for full updates.
     """
     
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
 
     # Scope the update and guardian assignment to the current organization.
     result = await db.execute(
@@ -604,6 +601,9 @@ async def update_student_full(
 
     guardian = await _validate_guardian_link(
         db, student_data.guardian.guardian_id, president_id
+    )
+    await _validate_lecture_links(
+        db, [lecture.lecture_id for lecture in student_data.lectures], president_id
     )
 
     # Check if email is being changed and if new email is already taken by another user
@@ -690,6 +690,7 @@ async def update_student_full(
             selectinload(Student.participations).selectinload(SessionParticipation.lecture)
         )
         .where(Student.id == student_id)
+        .where(Student.president_id == president_id)
     )
     updated_student = result.scalar_one()
 
@@ -702,20 +703,11 @@ async def update_student_full(
 async def delete_student(
     student_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Delete a student. Only presidents and supervisors can delete students."""
-
-    result = await db.execute(
-        select(Student).where(Student.id == student_id)
-    )
-    student = result.scalar_one_or_none()
-
-    if not student:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Student with ID {student_id} not found"
-        )
+    student = await _get_accessible_student(student_id, current_user, db, school_id)
 
     profile_image = student.profile_image
     # Delete the student (will cascade to user due to relationship)
@@ -1072,7 +1064,7 @@ async def create_attendance(
     student_id: int,
     attendance_data: AttendanceCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_teacher_or_above),
+    current_user=Depends(require_teacher_or_school_manager),
     school_id: int = None
 ):
     """Create or update attendance record for a student on a specific date."""
@@ -1237,7 +1229,7 @@ async def update_attendance(
     attendance_id: int,
     attendance_data: AttendanceUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_teacher_or_above),
+    current_user=Depends(require_teacher_or_school_manager),
     school_id: int = None
 ):
     """Update an attendance record."""
@@ -1280,7 +1272,7 @@ async def delete_attendance(
     student_id: int,
     attendance_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_teacher_or_above),
+    current_user=Depends(require_teacher_or_school_manager),
     school_id: int = None
 ):
     """Delete an attendance record."""

@@ -28,7 +28,11 @@ from app.schemas.statistics import (
     LectureDistributionResponse,
     AttendanceStatisticsResponse,
 )
-from app.core.dependencies import require_president, require_president_or_admin
+from app.core.dependencies import (
+    require_president_chief_supervisor_or_admin,
+    require_school_management_access,
+)
+from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 
 
 presidentRouter = APIRouter()
@@ -46,47 +50,20 @@ async def get_current_president_id(current_user, db: AsyncSession, school_id: in
     Returns:
         President ID
     """
-    from app.models.admin import Admin
-    
-    # If admin is accessing and school_id is provided, return that school's president_id
-    if isinstance(current_user, Admin):
-        if school_id:
-            result = await db.execute(
-                select(President).where(President.id == school_id)
-            )
-            president = result.scalar_one_or_none()
-            if not president:
-                raise HTTPException(status_code=404, detail="School not found")
-            return president.id
-        else:
-            raise HTTPException(
-                status_code=400, 
-                detail="Admin must specify school_id parameter"
-            )
-    
-    # For president users, get their own president_id
-    result = await db.execute(
-        select(President).where(President.user_id == current_user.id)
-    )
-    president = result.scalar_one_or_none()
-    if not president:
-        raise HTTPException(status_code=403, detail="Not authorized as president")
-    return president.id
+    return await get_president_id_for_user(current_user, db, school_id)
 
 
 @presidentRouter.post("/register_supervisor", response_model=SupervisorResponse)
 async def add_supervisor(
         supervisor_data: SupervisorCreate,
         db: AsyncSession = Depends(get_db),
-        current_user = Depends(require_president_or_admin),
-        school_id: int = None
+        current_user = Depends(require_president_chief_supervisor_or_admin),
+        school_id: int | None = None
 ):
     # Get president ID (handles both president and admin)
     president_id = await get_current_president_id(current_user, db, school_id)
     
-    # Get the user_id for created_by_id
-    from app.models.admin import Admin
-    created_by_user_id = current_user.id if not isinstance(current_user, Admin) else None
+    created_by_user_id = await get_creator_user_id(current_user, president_id, db)
     
     # Check if email already exists
     existing_user = await db.execute(
@@ -132,8 +109,8 @@ async def add_supervisor(
 async def register_teacher(
     teacher_data: TeacherCreate,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
-    school_id: int = None
+    current_user = Depends(require_school_management_access),
+    school_id: int | None = None
 ):
     # Get president ID (handles both president and admin)
     president_id = await get_current_president_id(current_user, db, school_id)
@@ -161,7 +138,7 @@ async def register_teacher(
     new_teacher = Teacher(
         user_id=new_user.id,
         riwaya=teacher_data.riwaya,
-        created_by_id=current_user.id,
+        created_by_id=await get_creator_user_id(current_user, president_id, db),
         president_id=president_id
     )
     db.add(new_teacher)
@@ -184,8 +161,8 @@ async def register_teacher(
 async def register_student(
     student_data: StudentCreate,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
-    school_id: int = None
+    current_user = Depends(require_school_management_access),
+    school_id: int | None = None
 ):
     # Get president ID (handles both president and admin)
     president_id = await get_current_president_id(current_user, db, school_id)
@@ -215,7 +192,7 @@ async def register_student(
         parent_name=student_data.parent_name,
         parent_phone=student_data.parent_phone,
         guardian_email=student_data.guardian_email,
-        created_by_id=current_user.id,
+        created_by_id=await get_creator_user_id(current_user, president_id, db),
         president_id=president_id
     )
     db.add(new_student)
@@ -230,8 +207,8 @@ async def register_student(
 @presidentRouter.get("/teachers", response_model=list[TeacherResponse])
 async def get_teachers(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
-    school_id: int = None
+    current_user = Depends(require_school_management_access),
+    school_id: int | None = None
 ):
     # Get president ID (handles both president and admin)
     president_id = await get_current_president_id(current_user, db, school_id)
@@ -261,8 +238,8 @@ async def get_teachers(
 @presidentRouter.get("/students", response_model=list[StudentResponse])
 async def get_students(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
-    school_id: int = None
+    current_user = Depends(require_school_management_access),
+    school_id: int | None = None
 ):
     # Get president ID (handles both president and admin)
     president_id = await get_current_president_id(current_user, db, school_id)
@@ -278,7 +255,7 @@ async def get_students(
 @presidentRouter.get("/statistics/summary", response_model=StatsSummaryResponse)
 async def get_statistics_summary(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_school_management_access),
     school_id: int = None
 ):
     """Get summary statistics for the president's school"""
@@ -346,7 +323,7 @@ async def get_statistics_summary(
 async def get_attendance_trend(
     limit: int = 10,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_school_management_access),
     school_id: int = None
 ):
     """Get attendance trend over recent days"""
@@ -411,7 +388,7 @@ async def get_attendance_statistics(
     student_id: int | None = None,
     school_id: int | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_president_or_admin),
+    current_user=Depends(require_school_management_access),
 ):
     if start_date > end_date:
         raise HTTPException(status_code=422, detail="start_date must be on or before end_date")
@@ -499,7 +476,7 @@ async def get_attendance_statistics(
 async def get_top_memorizers(
     limit: int = 5,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_school_management_access),
     school_id: int = None
 ):
     """Get top students by memorization progress"""
@@ -535,7 +512,7 @@ async def get_top_memorizers(
 @presidentRouter.get("/statistics/lecture-distribution", response_model=list[LectureDistributionResponse])
 async def get_lecture_distribution(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_school_management_access),
     school_id: int = None
 ):
     """Get student distribution across lectures"""

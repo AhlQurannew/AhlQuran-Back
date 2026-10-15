@@ -22,9 +22,9 @@ from app.schemas.guardian_student_data import (
     GuardianAttendanceResponse,
     StudentContext
 )
-from app.core.dependencies import require_guardian, require_president_or_supervisor
+from app.core.dependencies import require_guardian, require_school_management_access
 from app.core.security import get_password_hash
-from app.core.multi_tenancy import get_president_id_for_user
+from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 from typing import Tuple, List, Optional
 from datetime import date, datetime
 from fastapi import Query
@@ -887,7 +887,8 @@ async def get_student_attendance(
 async def create_guardian(
     guardian_data: GuardianCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """
     Create a new guardian for the current president's organization.
@@ -895,7 +896,7 @@ async def create_guardian(
     Only presidents and supervisors can create guardians.
     """
     # Get president ID (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     
     # Check if email already exists
     existing_user = await db.execute(
@@ -932,7 +933,7 @@ async def create_guardian(
         email=guardian_data.guardian_info.email,
         job=guardian_data.guardian_info.job,
         address=guardian_data.guardian_info.address,
-        created_by_id=current_user.id
+        created_by_id=await get_creator_user_id(current_user, president_id, db)
     )
     db.add(new_guardian)
     await db.flush()
@@ -958,7 +959,8 @@ async def list_guardians(
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """
     Get all guardians for the current president's organization.
@@ -966,7 +968,7 @@ async def list_guardians(
     Only presidents and supervisors can view all guardians.
     """
     # Get president ID (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     
     # Filter guardians by president_id with eager loading
     result = await db.execute(
@@ -1001,9 +1003,10 @@ async def get_linkable_students(
     limit: int = Query(100, ge=1, le=500),
     guardian_id: int | None = Query(None, gt=0),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor),
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     if guardian_id is not None:
         guardian_result = await db.execute(
             select(Guardian.id).where(
@@ -1040,11 +1043,12 @@ async def get_linkable_students(
 async def get_guardian(
     guardian_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Get a specific guardian by ID."""
     # Get president ID (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     
     result = await db.execute(
         select(Guardian)
@@ -1070,7 +1074,8 @@ async def update_guardian(
     guardian_id: int,
     guardian_data: GuardianUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """
     Update an existing guardian.
@@ -1078,7 +1083,7 @@ async def update_guardian(
     Only presidents and supervisors can update guardians.
     """
     # Get president ID (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     
     # Get guardian and verify it belongs to this president
     result = await db.execute(
@@ -1142,7 +1147,8 @@ async def update_guardian(
 async def delete_guardian(
     guardian_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """
     Delete a guardian.
@@ -1151,7 +1157,7 @@ async def delete_guardian(
     Only presidents and supervisors can delete guardians.
     """
     # Get president ID (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     
     # Get guardian and verify it belongs to this president
     result = await db.execute(

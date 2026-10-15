@@ -182,6 +182,25 @@ async def require_president_or_chief_supervisor(
     return current_user
 
 
+async def require_president_chief_supervisor_or_admin(
+    current_user=Depends(get_current_user),
+):
+    """Allow school presidents, chief supervisors, or admins with school context."""
+    from app.models.admin import Admin
+
+    if isinstance(current_user, Admin):
+        return current_user
+    if getattr(current_user, "role", None) in {
+        UserRoleEnum.PRESIDENT,
+        UserRoleEnum.CHIEF_SUPERVISOR,
+    }:
+        return current_user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="This action requires president or chief supervisor privileges",
+    )
+
+
 async def require_teacher(
     current_user: User = Depends(get_current_user)
 ) -> User:
@@ -203,6 +222,28 @@ async def require_teacher_or_above(
             detail="This action requires teacher, supervisor, or president privileges"
         )
     return current_user
+
+
+async def require_teacher_or_school_manager(
+    current_user=Depends(get_current_user),
+):
+    """Allow teachers and school managers; admins must use a selected school."""
+    from app.models.admin import Admin
+
+    if isinstance(current_user, Admin):
+        return current_user
+    allowed = {
+        UserRoleEnum.TEACHER,
+        UserRoleEnum.PRESIDENT,
+        UserRoleEnum.SUPERVISOR,
+        UserRoleEnum.CHIEF_SUPERVISOR,
+    }
+    if getattr(current_user, "role", None) in allowed:
+        return current_user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="This action requires teacher or school management privileges",
+    )
 
 
 async def require_guardian(

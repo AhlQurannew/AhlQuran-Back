@@ -54,3 +54,14 @@ async def get_president_id_for_user(
             detail="Account is not linked to a school",
         )
     return president_id
+
+
+async def get_creator_user_id(current_user, president_id: int, db: AsyncSession) -> int:
+    """Return a valid user FK for audit columns, which do not reference admins."""
+    if isinstance(current_user, Admin):
+        result = await db.execute(select(President.user_id).where(President.id == president_id))
+        user_id = result.scalar_one_or_none()
+        if user_id is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+        return user_id
+    return current_user.id

@@ -134,7 +134,7 @@ def map_student_to_response(student: Student) -> StudentResponse:
 async def create_student(
     student_data: StudentCreateFull,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_president_or_supervisor),  # Allow supervisors to create students
     school_id: int = None
 ):
     # Get president ID (works for both presidents, supervisors, and admins)
@@ -238,7 +238,7 @@ async def list_students(
     limit: int = 100,
     lecture_id: int = None,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_president_or_supervisor),  # Allow supervisors to view students
     school_id: int = None
 ):
     """Get all students. Optionally filter by lecture_id. Presidents, supervisors, and admins can view students."""
@@ -537,12 +537,8 @@ async def add_achievement(
             detail=f"Student with ID {student_id} not found"
         )
 
-    # Validate achievement data belongs to the correct student
-    if achievement_data.student_id != student_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Student ID in URL must match student_id in request body"
-        )
+    # Ensure achievement data belongs to the correct student
+    achievement_data.student_id = student_id
 
     # Get president_id from current user (works for both presidents and supervisors)
     president_id = await get_president_id_for_user(current_user, db)
@@ -717,12 +713,8 @@ async def create_attendance(
             detail=f"Student with ID {student_id} not found or not accessible"
         )
 
-    # Validate attendance data belongs to the correct student (if student_id provided)
-    if attendance_data.student_id is not None and attendance_data.student_id != student_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Student ID in URL must match student_id in request body"
-        )
+    # Ensure attendance data belongs to the correct student
+    attendance_data.student_id = student_id
 
     # Check if attendance already exists for this student and date
     existing_result = await db.execute(

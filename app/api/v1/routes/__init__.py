@@ -4,6 +4,7 @@ from .auth import authRouter
 from .admin import adminRouter
 from .president import presidentRouter
 from .supervisor import supervisorRouter
+from .supervisors import supervisorRouter as supervisorsRouter
 from .teacher import teacherRouter
 from .student import studentRouter
 from .lectures import lectureRouter
@@ -17,6 +18,7 @@ def register_routes(app):
         (adminRouter, "/admin", ["Admin"]),
         (presidentRouter, "/president", ["President"]),
         (supervisorRouter, "/supervisor", ["Supervisor"]),
+        (supervisorsRouter, "/supervisors", ["Supervisors Management"]),
         (teacherRouter, "/teacher", ["Teacher"]),
         (studentRouter, "/students", ["Students"]),
         (lectureRouter, "/lectures", ["Lectures"]),

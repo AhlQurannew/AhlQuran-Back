@@ -305,6 +305,264 @@ async def get_all_schools(
         )
 
 
+@adminRouter.put("/schools/{school_id}")
+async def update_school(
+    school_id: int,
+    school_data: dict,
+    db: AsyncSession = Depends(get_db),
+    admin = Depends(require_admin)
+):
+    """
+    ADMIN ONLY: Update school and president information.
+    """
+    logger.info(f"[UPDATE SCHOOL] Admin updating school ID: {school_id}")
+    
+    try:
+        # Get the president
+        result = await db.execute(
+            select(President).options(selectinload(President.user)).where(President.id == school_id)
+        )
+        president = result.scalar_one_or_none()
+        
+        if not president:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="School not found"
+            )
+        
+        # Update school name
+        if 'school_name' in school_data:
+            president.school_name = school_data['school_name']
+        
+        # Update phone number
+        if 'phone_number' in school_data:
+            president.phone_number = school_data['phone_number']
+        
+        # Update president user info
+        if 'president_firstname' in school_data:
+            president.user.firstname = school_data['president_firstname']
+        
+        if 'president_lastname' in school_data:
+            president.user.lastname = school_data['president_lastname']
+        
+        if 'email' in school_data:
+            # Check if new email already exists
+            result = await db.execute(
+                select(User).where(User.email == school_data['email']).where(User.id != president.user_id)
+            )
+            existing_user = result.scalar_one_or_none()
+            
+            if existing_user:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email already exists"
+                )
+            
+            president.user.email = school_data['email']
+        
+        # Update password if provided
+        if 'password' in school_data and school_data['password']:
+            from app.core.security import get_password_hash
+            president.user.hashed_password = get_password_hash(school_data['password'])
+        
+        await db.commit()
+        await db.refresh(president)
+        
+        logger.info(f"[UPDATE SCHOOL] School updated successfully: {president.school_name}")
+        
+        return {
+            "message": "School updated successfully",
+            "school": {
+                "id": president.id,
+                "school_name": president.school_name,
+                "president_name": f"{president.user.firstname} {president.user.lastname}",
+                "email": president.user.email,
+                "phone_number": president.phone_number
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[UPDATE SCHOOL] Error: {str(e)}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating school: {str(e)}"
+        )
+
+
+@adminRouter.delete("/schools/{school_id}")
+async def delete_school(
+    school_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin = Depends(require_admin)
+):
+    """
+    ADMIN ONLY: Delete a school and all associated data.
+    WARNING: This will delete the president user and all cascade data.
+    """
+    logger.info(f"[DELETE SCHOOL] Admin deleting school ID: {school_id}")
+    
+    try:
+        # Get the president
+        result = await db.execute(
+            select(President).options(selectinload(President.user)).where(President.id == school_id)
+        )
+        president = result.scalar_one_or_none()
+        
+        if not president:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="School not found"
+            )
+        
+        school_name = president.school_name
+        
+        # Delete the user (cascade will delete president and all related data)
+        await db.delete(president.user)
+        await db.commit()
+        
+        logger.info(f"[DELETE SCHOOL] School deleted successfully: {school_name}")
+        
+        return {
+            "message": f"School '{school_name}' has been deleted successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[DELETE SCHOOL] Error: {str(e)}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting school: {str(e)}"
+        )
+
+
+@adminRouter.post("/schools")
+async def create_school(
+    school_data: dict,
+    db: AsyncSession = Depends(get_db),
+    admin = Depends(require_admin)
+):
+    """
+    ADMIN ONLY: Create a new school with a Chief Supervisor (المشرف العام) account.
+    
+    Required fields:
+    - school_name: str
+    - chief_supervisor_firstname: str
+    - chief_supervisor_lastname: str
+    - email: str (chief supervisor email)
+    - password: str (chief supervisor password)
+    - phone_number: str (optional)
+    """
+    from app.core.security import get_password_hash
+    from app.models.chief_supervisor import ChiefSupervisor
+    
+    logger.info(f"[CREATE SCHOOL] Admin creating new school: {school_data.get('school_name')}")
+    
+    try:
+        # Validate required fields
+        required_fields = ['school_name', 'chief_supervisor_firstname', 'chief_supervisor_lastname', 'email', 'password']
+        missing_fields = [field for field in required_fields if not school_data.get(field)]
+        
+        if missing_fields:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Missing required fields: {', '.join(missing_fields)}"
+            )
+        
+        # Check if email already exists
+        result = await db.execute(
+            select(User).where(User.email == school_data['email'])
+        )
+        existing_user = result.scalar_one_or_none()
+        
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already exists"
+            )
+        
+        # First, we need to create a president entry (legacy requirement for database structure)
+        # Create a placeholder president user
+        president_user = User(
+            firstname="System",
+            lastname="Admin",
+            email=f"system.{datetime.utcnow().timestamp()}@school.internal",
+            hashed_password=get_password_hash("system_placeholder"),
+            role=UserRoleEnum.PRESIDENT,
+            is_active=True
+        )
+        
+        db.add(president_user)
+        await db.flush()
+        
+        # Create president profile (placeholder for school association)
+        new_president = President(
+            user_id=president_user.id,
+            school_name=school_data['school_name'],
+            phone_number=school_data.get('phone_number', ''),
+            approval_date=datetime.utcnow(),
+            created_at=datetime.utcnow()
+        )
+        
+        db.add(new_president)
+        await db.flush()
+        
+        # Create Chief Supervisor user account (the actual school head)
+        chief_user = User(
+            firstname=school_data['chief_supervisor_firstname'],
+            lastname=school_data['chief_supervisor_lastname'],
+            email=school_data['email'],
+            hashed_password=get_password_hash(school_data['password']),
+            role=UserRoleEnum.CHIEF_SUPERVISOR,
+            is_active=True
+        )
+        
+        db.add(chief_user)
+        await db.flush()
+        
+        # Create chief supervisor profile
+        chief_supervisor = ChiefSupervisor(
+            user_id=chief_user.id,
+            president_id=new_president.id,
+            created_by_id=president_user.id,
+            created_at=datetime.utcnow()
+        )
+        
+        db.add(chief_supervisor)
+        await db.commit()
+        await db.refresh(chief_user)
+        await db.refresh(new_president)
+        
+        logger.info(f"[CREATE SCHOOL] School created successfully: {new_president.school_name}")
+        logger.info(f"[CREATE SCHOOL] Chief Supervisor created: {chief_user.email}")
+        
+        return {
+            "message": "School created successfully with Chief Supervisor account",
+            "school": {
+                "id": new_president.id,
+                "school_name": new_president.school_name,
+                "chief_supervisor_name": f"{chief_user.firstname} {chief_user.lastname}",
+                "email": chief_user.email,
+                "phone_number": new_president.phone_number,
+                "is_active": chief_user.is_active
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[CREATE SCHOOL] Error: {str(e)}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating school: {str(e)}"
+        )
+
+
 ## Statistics Endpoints
 
 @adminRouter.get("/statistics/overview")

@@ -8,6 +8,7 @@ from app.db.base import Base
 
 class UserRoleEnum(str, Enum):
     PRESIDENT = "PRESIDENT"
+    CHIEF_SUPERVISOR = "CHIEF_SUPERVISOR"  # المشرف العام - Can manage supervisors
     SUPERVISOR = "SUPERVISOR"
     TEACHER = "TEACHER"
     STUDENT = "STUDENT"
@@ -43,6 +44,14 @@ class User(Base):
         cascade="all, delete-orphan",
         foreign_keys="Supervisor.user_id"      
         )
+    
+    chief_supervisor: Mapped[Optional["ChiefSupervisor"]] = relationship(
+        "ChiefSupervisor",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+        foreign_keys="ChiefSupervisor.user_id"
+    )
     
     teacher: Mapped[Optional["Teacher"]] = relationship(
         "Teacher",  back_populates="user",

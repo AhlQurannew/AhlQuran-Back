@@ -28,7 +28,7 @@ COPY alembic /app/alembic
 
 # Copy startup script
 COPY scripts/startup.sh /app/startup.sh
-RUN chmod +x /app/startup.sh
+RUN sed -i 's/\r$//' /app/startup.sh && chmod +x /app/startup.sh
 
 # Create uploads directory
 RUN mkdir -p /app/uploads

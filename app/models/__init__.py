@@ -3,6 +3,7 @@
 from app.models.user import User, UserRoleEnum
 from app.models.president import President
 from app.models.supervisor import Supervisor
+from app.models.chief_supervisor import ChiefSupervisor
 from app.models.teacher import Teacher
 from app.models.student import Student
 from app.models.guardian import Guardian
@@ -20,6 +21,7 @@ __all__ = [
     "UserRoleEnum",
     "President",
     "Supervisor",
+    "ChiefSupervisor",
     "Teacher",
     "Student",
     "Guardian",

@@ -14,10 +14,11 @@ class TeacherCreate(TeacherBase):
 
 
 class TeacherUpdate(BaseModel):
-    firstname: Optional[str]
-    lastname: Optional[str]
-    email: Optional[EmailStr]
-    riwaya: Optional[str]
+    firstname: Optional[str] = None
+    lastname: Optional[str] = None
+    email: Optional[EmailStr] = None
+    riwaya: Optional[str] = None
+    password: Optional[str] = None  # Optional password for reset
 
 
 class TeacherResponse(BaseModel):

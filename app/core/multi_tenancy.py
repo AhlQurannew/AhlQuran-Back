@@ -73,6 +73,19 @@ async def get_president_id_for_user(
             )
         return supervisor.president_id
     
+    elif current_user.role == UserRoleEnum.CHIEF_SUPERVISOR:
+        from app.models.chief_supervisor import ChiefSupervisor
+        result = await db.execute(
+            select(ChiefSupervisor).where(ChiefSupervisor.user_id == current_user.id)
+        )
+        chief_supervisor = result.scalar_one_or_none()
+        if not chief_supervisor or not chief_supervisor.president_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Chief Supervisor record not found or not linked to a president"
+            )
+        return chief_supervisor.president_id
+    
     elif current_user.role == UserRoleEnum.TEACHER:
         result = await db.execute(
             select(Teacher).where(Teacher.user_id == current_user.id)

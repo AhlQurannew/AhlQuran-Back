@@ -24,7 +24,7 @@ class AchievementBase(BaseModel):
 
 
 class AchievementCreate(AchievementBase):
-    student_id: int = Field(..., gt=0, example=1)
+    student_id: Optional[int] = Field(None, gt=0, example=1)
 
 
 class AchievementUpdate(BaseModel):

@@ -101,3 +101,12 @@ class RefreshTokenRequest(BaseModel):
 class RefreshTokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1, description="Current password")
+    new_password: str = Field(..., min_length=6, description="New password")
+    confirm_password: Optional[str] = Field(None, description="Confirm password")
+
+class ChangePasswordResponse(BaseModel):
+    message: str

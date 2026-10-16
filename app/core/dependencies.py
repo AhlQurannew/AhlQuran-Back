@@ -51,6 +51,9 @@ async def get_current_user(
     # Check token type
     token_type = payload.get("role")
     logger.info(f"Token role: {token_type}")
+    
+    # Log all headers for debugging
+    logger.info(f"Request headers: {dict(request.headers)}")
 
     # For admin tokens, check if type is "admin"
     if token_type == "admin":
@@ -76,6 +79,22 @@ async def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        # Check for role override header (admin viewing as CHIEF_SUPERVISOR)
+        role_override = request.headers.get("X-Role-Override")
+        logger.info(f"Role override header: {role_override}")
+        if role_override:
+            logger.info(f"Admin role override detected: {role_override}")
+            # Create a User-like object with the admin's info but CHIEF_SUPERVISOR role
+            class AdminAsUser:
+                def __init__(self, admin, role):
+                    self.id = admin.id
+                    self.role = UserRoleEnum(role)
+                    self.is_active = True
+                    self.is_admin = True
+                    self._admin_obj = admin
+            
+            return AdminAsUser(admin, role_override)
+        
         return admin
 
     # For user tokens
@@ -156,8 +175,18 @@ async def require_supervisor(
 
 
 async def require_president_or_supervisor(
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
+    from app.models.admin import Admin
+    
+    # If it's an Admin object, allow access (admin can view as chief supervisor)
+    if isinstance(current_user, Admin):
+        return current_user
+    
+    # Check if it's AdminAsUser (role override)
+    if hasattr(current_user, 'is_admin') and current_user.is_admin:
+        return current_user
+    
     allowed = [UserRoleEnum.PRESIDENT, UserRoleEnum.SUPERVISOR, UserRoleEnum.CHIEF_SUPERVISOR]
     if current_user.role not in allowed:
         raise HTTPException(
@@ -168,9 +197,19 @@ async def require_president_or_supervisor(
 
 
 async def require_president_or_chief_supervisor(
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
-    """Chief Supervisor can manage supervisors"""
+    """Chief Supervisor can manage supervisors. Admin can also access."""
+    from app.models.admin import Admin
+    
+    # If it's an Admin object, allow access
+    if isinstance(current_user, Admin):
+        return current_user
+    
+    # Check if it's AdminAsUser (role override)
+    if hasattr(current_user, 'is_admin') and current_user.is_admin:
+        return current_user
+    
     allowed = [UserRoleEnum.PRESIDENT, UserRoleEnum.CHIEF_SUPERVISOR]
     if current_user.role not in allowed:
         raise HTTPException(

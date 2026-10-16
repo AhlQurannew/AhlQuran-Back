@@ -27,7 +27,7 @@ from app.schemas.statistics import (
     MemorizationRecordResponse,
     LectureDistributionResponse
 )
-from app.core.dependencies import require_president, require_president_or_admin
+from app.core.dependencies import require_president, require_president_or_admin, require_president_or_supervisor
 
 
 presidentRouter = APIRouter()
@@ -35,10 +35,10 @@ presidentRouter = APIRouter()
 
 async def get_current_president_id(current_user, db: AsyncSession, school_id: int = None) -> int:
     """
-    Helper function to get the president ID for the current user or admin viewing a school.
+    Helper function to get the president ID for the current user (president, supervisor) or admin viewing a school.
     
     Args:
-        current_user: Current authenticated user (President or Admin)
+        current_user: Current authenticated user (President, Supervisor, or Admin)
         db: Database session
         school_id: Optional school_id when admin is viewing a specific school
     
@@ -63,6 +63,26 @@ async def get_current_president_id(current_user, db: AsyncSession, school_id: in
                 detail="Admin must specify school_id parameter"
             )
     
+    # For supervisor and chief supervisor users, get their president_id
+    if current_user.role == UserRoleEnum.SUPERVISOR:
+        result = await db.execute(
+            select(Supervisor).where(Supervisor.user_id == current_user.id)
+        )
+        supervisor = result.scalar_one_or_none()
+        if not supervisor:
+            raise HTTPException(status_code=403, detail="Supervisor record not found")
+        return supervisor.president_id
+    
+    if current_user.role == UserRoleEnum.CHIEF_SUPERVISOR:
+        from app.models.chief_supervisor import ChiefSupervisor
+        result = await db.execute(
+            select(ChiefSupervisor).where(ChiefSupervisor.user_id == current_user.id)
+        )
+        chief_supervisor = result.scalar_one_or_none()
+        if not chief_supervisor:
+            raise HTTPException(status_code=403, detail="Chief Supervisor record not found")
+        return chief_supervisor.president_id
+    
     # For president users, get their own president_id
     result = await db.execute(
         select(President).where(President.user_id == current_user.id)
@@ -77,7 +97,7 @@ async def get_current_president_id(current_user, db: AsyncSession, school_id: in
 async def add_supervisor(
         supervisor_data: SupervisorCreate,
         db: AsyncSession = Depends(get_db),
-        current_user = Depends(require_president_or_admin),
+        current_user = Depends(require_president_or_admin),  # Only presidents and admins can create supervisors
         school_id: int = None
 ):
     # Get president ID (handles both president and admin)
@@ -131,7 +151,7 @@ async def add_supervisor(
 async def register_teacher(
     teacher_data: TeacherCreate,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_president_or_supervisor),  # Allow supervisors to create teachers
     school_id: int = None
 ):
     # Get president ID (handles both president and admin)
@@ -183,7 +203,7 @@ async def register_teacher(
 async def register_student(
     student_data: StudentCreate,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_president_or_supervisor),  # Allow supervisors to create students
     school_id: int = None
 ):
     # Get president ID (handles both president and admin)
@@ -229,7 +249,7 @@ async def register_student(
 @presidentRouter.get("/teachers", response_model=list[TeacherResponse])
 async def get_teachers(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_president_or_supervisor),  # Allow supervisors to view teachers
     school_id: int = None
 ):
     # Get president ID (handles both president and admin)
@@ -260,7 +280,7 @@ async def get_teachers(
 @presidentRouter.get("/students", response_model=list[StudentResponse])
 async def get_students(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_president_or_supervisor),  # Allow supervisors to view students
     school_id: int = None
 ):
     # Get president ID (handles both president and admin)
@@ -480,3 +500,194 @@ async def get_lecture_distribution(
         }
         for lecture_name, count in lectures_data
     ]
+
+
+def parse_date_safe(d_str: str | None) -> date | None:
+    """Helper to safely parse YYYY-MM-DD or DD-MM-YYYY dates"""
+    if not d_str:
+        return None
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(d_str.strip(), fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+@presidentRouter.get("/statistics/achievement-breakdown")
+async def get_president_achievement_breakdown(
+    lecture_id: int | None = None,
+    student_id: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(require_president_or_admin),
+    school_id: int | None = None
+):
+    president_id = await get_current_president_id(current_user, db, school_id)
+    
+    query = select(Achievement).join(Student, Achievement.student_id == Student.id).where(Student.president_id == president_id)
+    
+    if lecture_id:
+        query = query.join(SessionParticipation, SessionParticipation.student_id == Student.id).where(SessionParticipation.lecture_id == lecture_id)
+        
+    if student_id:
+        query = query.where(Achievement.student_id == student_id)
+        
+    start_d = parse_date_safe(start_date)
+    end_d = parse_date_safe(end_date)
+    if start_d:
+        query = query.where(func.to_date(Achievement.date, 'DD-MM-YYYY') >= start_d)
+    if end_d:
+        query = query.where(func.to_date(Achievement.date, 'DD-MM-YYYY') <= end_d)
+        
+    result = await db.execute(query)
+    achievements = result.scalars().all()
+    
+    breakdown = {"normal": 0.0, "small": 0.0, "big": 0.0}
+    for ach in achievements:
+        type_key = str(ach.achievement_type.value if hasattr(ach.achievement_type, "value") else ach.achievement_type).lower()
+        if type_key in breakdown:
+            diff = (ach.to_surah * 20 + ach.to_verse) - (ach.from_surah * 20 + ach.from_verse)
+            pages = max(1.0, round(diff / 15.0, 1)) if diff > 0 else 1.0
+            breakdown[type_key] += pages
+            
+    return {k: round(v, 1) for k, v in breakdown.items()}
+
+
+@presidentRouter.get("/statistics/attendance-breakdown")
+async def get_president_attendance_breakdown(
+    lecture_id: int | None = None,
+    student_id: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(require_president_or_admin),
+    school_id: int | None = None
+):
+    president_id = await get_current_president_id(current_user, db, school_id)
+    
+    query = select(Attendance).join(Student, Attendance.student_id == Student.id).where(Student.president_id == president_id)
+    
+    if lecture_id:
+        query = query.join(SessionParticipation, SessionParticipation.student_id == Student.id).where(SessionParticipation.lecture_id == lecture_id)
+        
+    if student_id:
+        query = query.where(Attendance.student_id == student_id)
+        
+    start_d = parse_date_safe(start_date)
+    end_d = parse_date_safe(end_date)
+    if start_d:
+        query = query.where(func.to_date(Attendance.date, 'DD-MM-YYYY') >= start_d)
+    if end_d:
+        query = query.where(func.to_date(Attendance.date, 'DD-MM-YYYY') <= end_d)
+        
+    result = await db.execute(query)
+    attendances = result.scalars().all()
+    
+    counts = {"present": 0, "late": 0, "absent": 0, "excused": 0}
+    for att in attendances:
+        status_key = str(att.status.value if hasattr(att.status, "value") else att.status).lower()
+        if status_key in counts:
+            counts[status_key] += 1
+            
+    counts["total"] = sum(counts.values())
+    return counts
+
+
+@presidentRouter.get("/statistics/halqa-breakdown")
+async def get_president_halqa_breakdown(
+    lecture_id: int,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(require_president_or_admin),
+    school_id: int | None = None
+):
+    president_id = await get_current_president_id(current_user, db, school_id)
+    
+    students_query = await db.execute(
+        select(Student, User)
+        .join(User, Student.user_id == User.id)
+        .join(SessionParticipation, Student.id == SessionParticipation.student_id)
+        .where(SessionParticipation.lecture_id == lecture_id, Student.president_id == president_id)
+        .distinct()
+    )
+    students = students_query.all()
+    if not students:
+        return []
+        
+    student_ids = [s[0].id for s in students]
+    query = select(Achievement).where(Achievement.student_id.in_(student_ids))
+    start_d = parse_date_safe(start_date)
+    end_d = parse_date_safe(end_date)
+    if start_d:
+        query = query.where(func.to_date(Achievement.date, 'DD-MM-YYYY') >= start_d)
+    if end_d:
+        query = query.where(func.to_date(Achievement.date, 'DD-MM-YYYY') <= end_d)
+        
+    ach_result = await db.execute(query)
+    achievements = ach_result.scalars().all()
+    
+    pages_by_student = {s[0].id: 0.0 for s in students}
+    for ach in achievements:
+        diff = (ach.to_surah * 20 + ach.to_verse) - (ach.from_surah * 20 + ach.from_verse)
+        pages = max(1.0, round(diff / 15.0, 1)) if diff > 0 else 1.0
+        pages_by_student[ach.student_id] = pages_by_student.get(ach.student_id, 0.0) + pages
+        
+    return [
+        {
+            "student": f"{user.firstname} {user.lastname}",
+            "pages": round(pages_by_student.get(student.id, 0.0), 1)
+        }
+        for student, user in students
+    ]
+
+
+@presidentRouter.get("/statistics/progress-timeline")
+async def get_president_progress_timeline(
+    student_id: int,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(require_president_or_admin),
+    school_id: int | None = None
+):
+    president_id = await get_current_president_id(current_user, db, school_id)
+    
+    check_query = await db.execute(
+        select(Student.id).where(Student.id == student_id, Student.president_id == president_id)
+    )
+    if not check_query.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
+        
+    query = select(Achievement).where(Achievement.student_id == student_id)
+    start_d = parse_date_safe(start_date)
+    end_d = parse_date_safe(end_date)
+    if start_d:
+        query = query.where(func.to_date(Achievement.date, 'DD-MM-YYYY') >= start_d)
+    if end_d:
+        query = query.where(func.to_date(Achievement.date, 'DD-MM-YYYY') <= end_d)
+        
+    ach_result = await db.execute(query.order_by(Achievement.created_at.asc()))
+    achievements = ach_result.scalars().all()
+    
+    from collections import OrderedDict
+    by_date = OrderedDict()
+    for ach in achievements:
+        d = ach.date or (ach.created_at.strftime("%d-%m-%Y") if ach.created_at else "01-01-2026")
+        short_date = "/".join(d.split("-")[:2]) if "-" in d else d
+        if short_date not in by_date:
+            by_date[short_date] = {"date": short_date, "memorization": 0.0, "minorRev": 0.0, "majorRev": 0.0}
+        
+        diff = (ach.to_surah * 20 + ach.to_verse) - (ach.from_surah * 20 + ach.from_verse)
+        pages = max(1.0, round(diff / 15.0, 1)) if diff > 0 else 1.0
+        type_key = str(ach.achievement_type.value if hasattr(ach.achievement_type, "value") else ach.achievement_type).lower()
+        if type_key == "normal":
+            by_date[short_date]["memorization"] += pages
+        elif type_key == "small":
+            by_date[short_date]["minorRev"] += pages
+        elif type_key == "big":
+            by_date[short_date]["majorRev"] += pages
+            
+    return list(by_date.values())

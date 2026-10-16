@@ -19,7 +19,9 @@ from app.schemas.auth import (
     LoginRequest,
     Token,
     RefreshTokenRequest,
-    RefreshTokenResponse
+    RefreshTokenResponse,
+    ChangePasswordRequest,
+    ChangePasswordResponse
 )
 from app.core.dependencies import get_current_user, require_admin
 
@@ -171,11 +173,11 @@ async def supervisor_login(
 ):
     logger.info(f"supervisor data form: {form_data}")
 
-    # Find user by email AND role
+    # Find user by email AND role (allow both SUPERVISOR and CHIEF_SUPERVISOR)
     result = await db.execute(
         select(User).where(
             User.email == form_data.email,
-            User.role == UserRoleEnum.SUPERVISOR
+            User.role.in_([UserRoleEnum.SUPERVISOR, UserRoleEnum.CHIEF_SUPERVISOR])
         )
     )
     user = result.scalar_one_or_none()
@@ -470,8 +472,18 @@ async def admin_login(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Verify password
-    if form_data.password != admin.password :
+    # Verify password - support both plain text (old) and hashed (new)
+    is_valid_password = False
+    
+    # Check if password is hashed (starts with $2b$ for bcrypt)
+    if admin.password.startswith('$2b$'):
+        # Use bcrypt verification for hashed passwords
+        is_valid_password = verify_password(form_data.password, admin.password)
+    else:
+        # Plain text comparison for legacy admins
+        is_valid_password = (form_data.password == admin.password)
+    
+    if not is_valid_password:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
@@ -663,3 +675,62 @@ async def refresh_token(
         "access_token": new_access_token,
         "token_type": "bearer"
     }
+
+
+# ========== CHANGE PASSWORD ==========
+@authRouter.post("/change-password", response_model=ChangePasswordResponse)
+async def change_password(
+    data: ChangePasswordRequest,
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Change password for the current authenticated user of any role:
+    Admin, President, Supervisor, Teacher, Guardian, Student.
+    """
+    if data.confirm_password and data.new_password != data.confirm_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="كلمة المرور الجديدة وتأكيد كلمة المرور غير متطابقين"
+        )
+
+    if len(data.new_password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="كلمة المرور يجب أن لا تقل عن 6 أحرف"
+        )
+
+    # 1. Admin account
+    if isinstance(current_user, Admin):
+        is_correct = (data.current_password == current_user.password)
+        if not is_correct:
+            try:
+                is_correct = verify_password(data.current_password, current_user.password)
+            except Exception:
+                pass
+        if not is_correct:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="كلمة المرور الحالية غير صحيحة"
+            )
+        current_user.password = data.new_password
+        await db.commit()
+        await db.refresh(current_user)
+        return {"message": "تم تغيير كلمة المرور بنجاح"}
+
+    # 2. Standard User account (President, Supervisor, Teacher, Guardian, Student)
+    if isinstance(current_user, User):
+        if not verify_password(data.current_password, current_user.hashed_password):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="كلمة المرور الحالية غير صحيحة"
+            )
+        current_user.hashed_password = get_password_hash(data.new_password)
+        await db.commit()
+        await db.refresh(current_user)
+        return {"message": "تم تغيير كلمة المرور بنجاح"}
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="مستخدم غير مصرح له"
+    )

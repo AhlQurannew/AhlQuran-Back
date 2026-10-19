@@ -1,4 +1,4 @@
-﻿from sqlalchemy import String, ForeignKey, DateTime, Boolean, func, Integer
+from sqlalchemy import String, ForeignKey, DateTime, Boolean, func, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime
 from typing import Optional, List
@@ -26,7 +26,9 @@ class President(Base):
     chief_supervisors: Mapped[List["ChiefSupervisor"]] = relationship(
         "ChiefSupervisor",
         foreign_keys="ChiefSupervisor.president_id",
-        back_populates="president"
+        back_populates="president",
+        cascade="all, delete-orphan",
+        passive_deletes=True
     )
 
     def __repr__(self) -> str:

@@ -34,7 +34,8 @@ class User(Base):
         "President",
         back_populates="user",
         uselist=False,
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan",
+        passive_deletes=True
     )
     
     supervisor: Mapped[Optional["Supervisor"]] = relationship(

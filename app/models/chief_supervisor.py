@@ -38,7 +38,9 @@ class ChiefSupervisor(Base):
     
     president: Mapped["President"] = relationship(
         "President",
-        foreign_keys=[president_id]
+        foreign_keys=[president_id],
+        back_populates="chief_supervisors",
+        passive_deletes=True
     )
     
     def __repr__(self) -> str:

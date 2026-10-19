@@ -426,15 +426,21 @@ async def delete_school(
     admin = Depends(require_admin)
 ):
     """
-    ADMIN ONLY: Delete a school and all associated data.
-    WARNING: This will delete the president user and all cascade data.
+    ADMIN ONLY: Delete a school and all associated data and users.
     """
+    from sqlalchemy import delete
+    from app.models.student import Student
+    from app.models.teacher import Teacher
+    from app.models.supervisor import Supervisor
+    from app.models.guardian import Guardian
+    from app.models.chief_supervisor import ChiefSupervisor
+
     logger.info(f"[DELETE SCHOOL] Admin deleting school ID: {school_id}")
     
     try:
         # Get the president
         result = await db.execute(
-            select(President).options(selectinload(President.user)).where(President.id == school_id)
+            select(President).where(President.id == school_id)
         )
         president = result.scalar_one_or_none()
         
@@ -446,11 +452,48 @@ async def delete_school(
         
         school_name = president.school_name
         
-        # Delete the user (cascade will delete president and all related data)
-        await db.delete(president.user)
+        # Collect all user_ids associated with this school to clean up their user accounts
+        user_ids_to_delete = set()
+        if president.user_id:
+            user_ids_to_delete.add(president.user_id)
+            
+        cs_res = await db.execute(select(ChiefSupervisor.user_id).where(ChiefSupervisor.president_id == school_id))
+        for uid in cs_res.scalars():
+            if uid:
+                user_ids_to_delete.add(uid)
+                
+        sup_res = await db.execute(select(Supervisor.user_id).where(Supervisor.president_id == school_id))
+        for uid in sup_res.scalars():
+            if uid:
+                user_ids_to_delete.add(uid)
+                
+        t_res = await db.execute(select(Teacher.user_id).where(Teacher.president_id == school_id))
+        for uid in t_res.scalars():
+            if uid:
+                user_ids_to_delete.add(uid)
+                
+        st_res = await db.execute(select(Student.user_id).where(Student.president_id == school_id))
+        for uid in st_res.scalars():
+            if uid:
+                user_ids_to_delete.add(uid)
+                
+        g_res = await db.execute(select(Guardian.user_id).where(Guardian.president_id == school_id))
+        for uid in g_res.scalars():
+            if uid:
+                user_ids_to_delete.add(uid)
+        
+        # Delete the president directly (foreign keys with ondelete="CASCADE" in PostgreSQL 
+        # will cascade-delete all school entities)
+        await db.delete(president)
+        await db.flush()
+        
+        # Now delete the associated user accounts
+        if user_ids_to_delete:
+            await db.execute(delete(User).where(User.id.in_(list(user_ids_to_delete))))
+            
         await db.commit()
         
-        logger.info(f"[DELETE SCHOOL] School deleted successfully: {school_name}")
+        logger.info(f"[DELETE SCHOOL] School '{school_name}' (ID: {school_id}) and {len(user_ids_to_delete)} users deleted successfully")
         
         return {
             "message": f"School '{school_name}' has been deleted successfully"

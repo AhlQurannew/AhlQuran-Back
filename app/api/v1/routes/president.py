@@ -28,6 +28,7 @@ from app.schemas.statistics import (
     LectureDistributionResponse
 )
 from app.core.dependencies import require_president, require_president_or_admin, require_president_or_supervisor
+from app.core.quran_pages import calculate_achievement_pages
 
 
 presidentRouter = APIRouter()
@@ -297,7 +298,7 @@ async def get_students(
 @presidentRouter.get("/statistics/summary", response_model=StatsSummaryResponse)
 async def get_statistics_summary(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_president_or_supervisor),
     school_id: int = None
 ):
     """Get summary statistics for the president's school"""
@@ -340,23 +341,24 @@ async def get_statistics_summary(
     )
     present_today = present_today_result.scalar() or 0
     
-    # Total pages memorized (sum of achievements)
-    total_pages_result = await db.execute(
-        select(func.sum(
-            (Achievement.to_surah * 20 + Achievement.to_verse) -
-            (Achievement.from_surah * 20 + Achievement.from_verse)
-        ))
+    # Total pages memorized (sum of achievements for president's students)
+    ach_result = await db.execute(
+        select(Achievement)
         .join(Student, Achievement.student_id == Student.id)
         .where(Student.president_id == president_id)
     )
-    total_pages = total_pages_result.scalar() or 0
+    achievements = ach_result.scalars().all()
+    total_pages = sum(
+        calculate_achievement_pages(ach.from_surah, ach.from_verse, ach.to_surah, ach.to_verse)
+        for ach in achievements
+    )
     
     return {
         "total_students": total_students,
         "total_teachers": total_teachers,
         "total_supervisors": total_supervisors,
         "present_today": present_today,
-        "total_pages_memorized": max(0, int(total_pages / 15)),  # Rough estimate
+        "total_pages_memorized": int(round(total_pages)),
         "total_lectures": total_lectures
     }
 
@@ -365,7 +367,7 @@ async def get_statistics_summary(
 async def get_attendance_trend(
     limit: int = 10,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_president_or_supervisor),
     school_id: int = None
 ):
     """Get attendance trend over recent days"""
@@ -426,43 +428,56 @@ async def get_attendance_trend(
 async def get_top_memorizers(
     limit: int = 5,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_president_or_supervisor),
     school_id: int = None
 ):
     """Get top students by memorization progress"""
     president_id = await get_current_president_id(current_user, db, school_id)
     
     # Get students with their total achievement pages
-    result = await db.execute(
-        select(
-            Student,
-            User,
-            func.count(Achievement.id).label('total_achievements')
-        )
+    students_result = await db.execute(
+        select(Student, User)
         .join(User, Student.user_id == User.id)
-        .outerjoin(Achievement, Achievement.student_id == Student.id)
         .where(Student.president_id == president_id)
-        .group_by(Student.id, User.id)
-        .order_by(func.count(Achievement.id).desc())
-        .limit(limit)
     )
-    
-    students_data = result.all()
+    students_data = students_result.all()
+    if not students_data:
+        return []
+
+    student_ids = [s[0].id for s in students_data]
+    ach_result = await db.execute(
+        select(Achievement).where(Achievement.student_id.in_(student_ids))
+    )
+    achievements = ach_result.scalars().all()
+
+    pages_by_student: dict[int, float] = {s[0].id: 0.0 for s in students_data}
+    for ach in achievements:
+        pages_by_student[ach.student_id] = pages_by_student.get(ach.student_id, 0.0) + calculate_achievement_pages(
+            ach.from_surah, ach.from_verse, ach.to_surah, ach.to_verse
+        )
+
+    # Sort students by total pages descending
+    sorted_students = sorted(
+        students_data,
+        key=lambda pair: pages_by_student.get(pair[0].id, 0.0),
+        reverse=True
+    )
+    top_students = sorted_students[:limit]
     
     return [
         {
             "student": f"{user.firstname} {user.lastname}",
-            "pages": count,
+            "pages": int(round(pages_by_student.get(student.id, 0.0))),
             "rank": idx + 1
         }
-        for idx, (student, user, count) in enumerate(students_data)
+        for idx, (student, user) in enumerate(top_students)
     ]
 
 
 @presidentRouter.get("/statistics/lecture-distribution", response_model=list[LectureDistributionResponse])
 async def get_lecture_distribution(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_president_or_supervisor),
     school_id: int = None
 ):
     """Get student distribution across lectures"""
@@ -521,7 +536,7 @@ async def get_president_achievement_breakdown(
     start_date: str | None = None,
     end_date: str | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_president_or_supervisor),
     school_id: int | None = None
 ):
     president_id = await get_current_president_id(current_user, db, school_id)
@@ -548,8 +563,7 @@ async def get_president_achievement_breakdown(
     for ach in achievements:
         type_key = str(ach.achievement_type.value if hasattr(ach.achievement_type, "value") else ach.achievement_type).lower()
         if type_key in breakdown:
-            diff = (ach.to_surah * 20 + ach.to_verse) - (ach.from_surah * 20 + ach.from_verse)
-            pages = max(1.0, round(diff / 15.0, 1)) if diff > 0 else 1.0
+            pages = calculate_achievement_pages(ach.from_surah, ach.from_verse, ach.to_surah, ach.to_verse)
             breakdown[type_key] += pages
             
     return {k: round(v, 1) for k, v in breakdown.items()}
@@ -562,7 +576,7 @@ async def get_president_attendance_breakdown(
     start_date: str | None = None,
     end_date: str | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_president_or_supervisor),
     school_id: int | None = None
 ):
     president_id = await get_current_president_id(current_user, db, school_id)
@@ -601,7 +615,7 @@ async def get_president_halqa_breakdown(
     start_date: str | None = None,
     end_date: str | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_president_or_supervisor),
     school_id: int | None = None
 ):
     president_id = await get_current_president_id(current_user, db, school_id)
@@ -631,8 +645,7 @@ async def get_president_halqa_breakdown(
     
     pages_by_student = {s[0].id: 0.0 for s in students}
     for ach in achievements:
-        diff = (ach.to_surah * 20 + ach.to_verse) - (ach.from_surah * 20 + ach.from_verse)
-        pages = max(1.0, round(diff / 15.0, 1)) if diff > 0 else 1.0
+        pages = calculate_achievement_pages(ach.from_surah, ach.from_verse, ach.to_surah, ach.to_verse)
         pages_by_student[ach.student_id] = pages_by_student.get(ach.student_id, 0.0) + pages
         
     return [
@@ -650,7 +663,7 @@ async def get_president_progress_timeline(
     start_date: str | None = None,
     end_date: str | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_admin),
+    current_user = Depends(require_president_or_supervisor),
     school_id: int | None = None
 ):
     president_id = await get_current_president_id(current_user, db, school_id)
@@ -680,8 +693,7 @@ async def get_president_progress_timeline(
         if short_date not in by_date:
             by_date[short_date] = {"date": short_date, "memorization": 0.0, "minorRev": 0.0, "majorRev": 0.0}
         
-        diff = (ach.to_surah * 20 + ach.to_verse) - (ach.from_surah * 20 + ach.from_verse)
-        pages = max(1.0, round(diff / 15.0, 1)) if diff > 0 else 1.0
+        pages = calculate_achievement_pages(ach.from_surah, ach.from_verse, ach.to_surah, ach.to_verse)
         type_key = str(ach.achievement_type.value if hasattr(ach.achievement_type, "value") else ach.achievement_type).lower()
         if type_key == "normal":
             by_date[short_date]["memorization"] += pages

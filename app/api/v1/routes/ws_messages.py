@@ -19,6 +19,8 @@ from app.models.user import User
 from app.models.president import President
 from app.models.teacher import Teacher
 from app.models.supervisor import Supervisor
+from app.models.chief_supervisor import ChiefSupervisor
+from app.models.admin import Admin
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +32,6 @@ _groups: dict[int, set[WebSocket]] = defaultdict(set)
 
 async def get_president_id_for_user(user, db: AsyncSession, school_id: int | None = None) -> int | None:
     """Resolve president_id for any authenticated user."""
-    from app.models.admin import Admin
     if isinstance(user, Admin) or getattr(user, "role", None) in ("admin", "ADMIN") or hasattr(user, "is_admin"):
         if school_id:
             result = await db.execute(select(President).where(President.id == school_id))
@@ -67,12 +68,10 @@ async def get_president_id_for_user(user, db: AsyncSession, school_id: int | Non
         return pres.id if pres else 1
     
     if role in ("CHIEF_SUPERVISOR", "CHIEFSUPERVISOR"):
-        from app.models.chief_supervisor import ChiefSupervisor
         result = await db.execute(select(ChiefSupervisor).where(ChiefSupervisor.user_id == user.id))
         cs = result.scalar_one_or_none()
         if cs and cs.president_id:
             return cs.president_id
-        from app.models.supervisor import Supervisor
         result = await db.execute(select(Supervisor).where(Supervisor.user_id == user.id))
         sup = result.scalar_one_or_none()
         if sup and sup.president_id:
@@ -91,6 +90,10 @@ async def authenticate_ws_token(token: str, db: AsyncSession):
     if not token:
         return None
     
+    if token.startswith("Bearer "):
+        token = token[7:]
+    token = token.strip().strip('"').strip("'")
+    
     payload = decode_token(token)
     if not payload:
         return None
@@ -98,7 +101,6 @@ async def authenticate_ws_token(token: str, db: AsyncSession):
     token_type = payload.get("type")
     admin_id = payload.get("admin_id")
     if token_type == "admin" or admin_id:
-        from app.models.admin import Admin
         result = await db.execute(select(Admin).where(Admin.id == admin_id))
         admin = result.scalar_one_or_none()
         if admin:
@@ -151,7 +153,6 @@ async def handle_websocket_connection(websocket: WebSocket, token: str, school_i
         await websocket.accept()
         _groups[president_id].add(websocket)
         
-        from app.models.admin import Admin
         is_admin_user = isinstance(user, Admin) or getattr(user, "role", None) in ("admin", "ADMIN") or hasattr(user, "is_admin")
         
         if is_admin_user:

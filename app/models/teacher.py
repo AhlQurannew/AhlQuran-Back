@@ -25,7 +25,7 @@ class Teacher(Base):
     # Teacher-specific fields
     riwaya: Mapped[str] = mapped_column(String(100), nullable=False)
     hire_date: Mapped[datetime] = mapped_column(DateTime(timezone=True) , default=lambda: datetime.now(timezone.utc))
-    created_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    created_by_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     
     # Relationships - USE STRING REFERENCES with foreign_keys
     user: Mapped["User"] = relationship(
@@ -34,7 +34,7 @@ class Teacher(Base):
         foreign_keys=[user_id]  # ← Use list
     )
     
-    created_by: Mapped["User"] = relationship(
+    created_by: Mapped[Optional["User"]] = relationship(
         "User",  # ← String reference
         foreign_keys=[created_by_id]  # ← Use list
     )

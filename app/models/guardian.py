@@ -41,7 +41,7 @@ class Guardian(Base):
         DateTime(timezone=True), 
         default=lambda: datetime.now(timezone.utc)
     )
-    created_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    created_by_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     
     # Relationships
     president: Mapped[Optional["President"]] = relationship("President", foreign_keys=[president_id])
@@ -52,7 +52,7 @@ class Guardian(Base):
         foreign_keys=[user_id]
     )
     
-    created_by: Mapped["User"] = relationship(
+    created_by: Mapped[Optional["User"]] = relationship(
         "User",
         foreign_keys=[created_by_id]
     )

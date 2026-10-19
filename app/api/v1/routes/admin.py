@@ -482,6 +482,17 @@ async def delete_school(
             if uid:
                 user_ids_to_delete.add(uid)
         
+        # Nullify any created_by_id references to these users across tables
+        if user_ids_to_delete:
+            from sqlalchemy import update
+            uids_list = list(user_ids_to_delete)
+            await db.execute(update(Supervisor).where(Supervisor.created_by_id.in_(uids_list)).values(created_by_id=None))
+            await db.execute(update(Teacher).where(Teacher.created_by_id.in_(uids_list)).values(created_by_id=None))
+            await db.execute(update(Student).where(Student.created_by_id.in_(uids_list)).values(created_by_id=None))
+            await db.execute(update(Guardian).where(Guardian.created_by_id.in_(uids_list)).values(created_by_id=None))
+            await db.execute(update(ChiefSupervisor).where(ChiefSupervisor.created_by_id.in_(uids_list)).values(created_by_id=None))
+            await db.flush()
+        
         # Delete the president directly (foreign keys with ondelete="CASCADE" in PostgreSQL 
         # will cascade-delete all school entities)
         await db.delete(president)

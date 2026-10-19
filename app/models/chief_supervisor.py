@@ -1,3 +1,4 @@
+from typing import Optional
 from sqlalchemy import String, Integer, ForeignKey, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime, timezone
@@ -21,7 +22,7 @@ class ChiefSupervisor(Base):
     )
     
     # Chief Supervisor-specific fields
-    created_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    created_by_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
     # Relationships
@@ -31,7 +32,7 @@ class ChiefSupervisor(Base):
         foreign_keys=[user_id]
     )
     
-    created_by: Mapped["User"] = relationship(
+    created_by: Mapped[Optional["User"]] = relationship(
         "User",
         foreign_keys=[created_by_id]
     )

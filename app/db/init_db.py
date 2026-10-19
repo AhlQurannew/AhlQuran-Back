@@ -15,6 +15,36 @@ async def create_tables():
     async with engine.begin() as conn:
         # Create all tables
         await conn.run_sync(Base.metadata.create_all)
+        
+        # Ensure created_by_id foreign keys are ON DELETE SET NULL and nullable
+        alter_sql = """
+        DO $$
+        BEGIN
+            ALTER TABLE supervisors ALTER COLUMN created_by_id DROP NOT NULL;
+            ALTER TABLE supervisors DROP CONSTRAINT IF EXISTS supervisors_created_by_id_fkey;
+            ALTER TABLE supervisors ADD CONSTRAINT supervisors_created_by_id_fkey FOREIGN KEY (created_by_id) REFERENCES users(id) ON DELETE SET NULL;
+
+            ALTER TABLE teachers ALTER COLUMN created_by_id DROP NOT NULL;
+            ALTER TABLE teachers DROP CONSTRAINT IF EXISTS teachers_created_by_id_fkey;
+            ALTER TABLE teachers ADD CONSTRAINT teachers_created_by_id_fkey FOREIGN KEY (created_by_id) REFERENCES users(id) ON DELETE SET NULL;
+
+            ALTER TABLE students ALTER COLUMN created_by_id DROP NOT NULL;
+            ALTER TABLE students DROP CONSTRAINT IF EXISTS students_created_by_id_fkey;
+            ALTER TABLE students ADD CONSTRAINT students_created_by_id_fkey FOREIGN KEY (created_by_id) REFERENCES users(id) ON DELETE SET NULL;
+
+            ALTER TABLE guardians ALTER COLUMN created_by_id DROP NOT NULL;
+            ALTER TABLE guardians DROP CONSTRAINT IF EXISTS guardians_created_by_id_fkey;
+            ALTER TABLE guardians ADD CONSTRAINT guardians_created_by_id_fkey FOREIGN KEY (created_by_id) REFERENCES users(id) ON DELETE SET NULL;
+
+            ALTER TABLE chief_supervisors ALTER COLUMN created_by_id DROP NOT NULL;
+            ALTER TABLE chief_supervisors DROP CONSTRAINT IF EXISTS chief_supervisors_created_by_id_fkey;
+            ALTER TABLE chief_supervisors ADD CONSTRAINT chief_supervisors_created_by_id_fkey FOREIGN KEY (created_by_id) REFERENCES users(id) ON DELETE SET NULL;
+        EXCEPTION WHEN OTHERS THEN
+            NULL;
+        END $$;
+        """
+        from sqlalchemy import text
+        await conn.execute(text(alter_sql))
     
     logger.info("✅ Database tables created successfully")
 

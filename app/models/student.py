@@ -28,7 +28,7 @@ class Student(Base):
     parent_name: Mapped[Optional[str]] = mapped_column(String(255))
     parent_phone: Mapped[Optional[str]] = mapped_column(String(20)) 
     guardian_email: Mapped[Optional[str]] = mapped_column(String(255))
-    created_by_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    created_by_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     Golden: Mapped[Optional[bool]] = mapped_column(Boolean, default=False)
     
     # New Fields
@@ -74,7 +74,7 @@ class Student(Base):
         foreign_keys=[user_id]
     )
     
-    created_by: Mapped["User"] = relationship(
+    created_by: Mapped[Optional["User"]] = relationship(
         "User",
         foreign_keys=[created_by_id]
     )

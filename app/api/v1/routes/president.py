@@ -1,8 +1,9 @@
-from fastapi import APIRouter, HTTPException, Depends, Response
+from fastapi import APIRouter, HTTPException, Depends, Response, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, String, cast
 from sqlalchemy.orm import selectinload
 from datetime import datetime, date
+from typing import Optional, List
 from app.db.session import get_db
 from app.core.security import get_password_hash
 
@@ -28,71 +29,19 @@ from app.schemas.statistics import (
     LectureDistributionResponse
 )
 from app.core.dependencies import require_president, require_president_or_admin, require_president_or_supervisor
-from app.core.multi_tenancy import get_created_by_user_id
+from app.core.multi_tenancy import get_president_id_for_user, get_created_by_user_id
 from app.core.quran_pages import calculate_achievement_pages
 
 
 presidentRouter = APIRouter()
 
 
-async def get_current_president_id(current_user, db: AsyncSession, school_id: int = None) -> int:
+async def get_current_president_id(current_user, db: AsyncSession, school_id: Optional[int] = None) -> int:
     """
-    Helper function to get the president ID for the current user (president, supervisor) or admin viewing a school.
-    
-    Args:
-        current_user: Current authenticated user (President, Supervisor, or Admin)
-        db: Database session
-        school_id: Optional school_id when admin is viewing a specific school
-    
-    Returns:
-        President ID
+    Helper function to get the president ID for the current user (president, supervisor, chief supervisor) or admin viewing a school.
+    Delegates to get_president_id_for_user in app.core.multi_tenancy.
     """
-    from app.models.admin import Admin
-    
-    # If admin is accessing and school_id is provided, return that school's president_id
-    if isinstance(current_user, Admin):
-        if school_id:
-            result = await db.execute(
-                select(President).where(President.id == school_id)
-            )
-            president = result.scalar_one_or_none()
-            if not president:
-                raise HTTPException(status_code=404, detail="School not found")
-            return president.id
-        else:
-            raise HTTPException(
-                status_code=400, 
-                detail="Admin must specify school_id parameter"
-            )
-    
-    # For supervisor and chief supervisor users, get their president_id
-    if current_user.role == UserRoleEnum.SUPERVISOR:
-        result = await db.execute(
-            select(Supervisor).where(Supervisor.user_id == current_user.id)
-        )
-        supervisor = result.scalar_one_or_none()
-        if not supervisor:
-            raise HTTPException(status_code=403, detail="Supervisor record not found")
-        return supervisor.president_id
-    
-    if current_user.role == UserRoleEnum.CHIEF_SUPERVISOR:
-        from app.models.chief_supervisor import ChiefSupervisor
-        result = await db.execute(
-            select(ChiefSupervisor).where(ChiefSupervisor.user_id == current_user.id)
-        )
-        chief_supervisor = result.scalar_one_or_none()
-        if not chief_supervisor:
-            raise HTTPException(status_code=403, detail="Chief Supervisor record not found")
-        return chief_supervisor.president_id
-    
-    # For president users, get their own president_id
-    result = await db.execute(
-        select(President).where(President.user_id == current_user.id)
-    )
-    president = result.scalar_one_or_none()
-    if not president:
-        raise HTTPException(status_code=403, detail="Not authorized as president")
-    return president.id
+    return await get_president_id_for_user(current_user, db, school_id=school_id)
 
 
 @presidentRouter.post("/register_supervisor", response_model=SupervisorResponse)
@@ -100,7 +49,7 @@ async def add_supervisor(
         supervisor_data: SupervisorCreate,
         db: AsyncSession = Depends(get_db),
         current_user = Depends(require_president_or_admin),  # Only presidents and admins can create supervisors
-        school_id: int = None
+        school_id: Optional[int] = Query(None)
 ):
     # Get president ID (handles both president and admin)
     president_id = await get_current_president_id(current_user, db, school_id)
@@ -153,7 +102,7 @@ async def register_teacher(
     teacher_data: TeacherCreate,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(require_president_or_supervisor),  # Allow supervisors to create teachers
-    school_id: int = None
+    school_id: Optional[int] = Query(None)
 ):
     # Get president ID (handles both president and admin)
     president_id = await get_current_president_id(current_user, db, school_id)
@@ -205,7 +154,7 @@ async def register_student(
     student_data: StudentCreate,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(require_president_or_supervisor),  # Allow supervisors to create students
-    school_id: int = None
+    school_id: Optional[int] = Query(None)
 ):
     # Get president ID (handles both president and admin)
     president_id = await get_current_president_id(current_user, db, school_id)
@@ -251,7 +200,7 @@ async def register_student(
 async def get_teachers(
     db: AsyncSession = Depends(get_db),
     current_user = Depends(require_president_or_supervisor),  # Allow supervisors to view teachers
-    school_id: int = None
+    school_id: Optional[int] = Query(None)
 ):
     # Get president ID (handles both president and admin)
     president_id = await get_current_president_id(current_user, db, school_id)
@@ -282,7 +231,7 @@ async def get_teachers(
 async def get_students(
     db: AsyncSession = Depends(get_db),
     current_user = Depends(require_president_or_supervisor),  # Allow supervisors to view students
-    school_id: int = None
+    school_id: Optional[int] = Query(None)
 ):
     # Get president ID (handles both president and admin)
     president_id = await get_current_president_id(current_user, db, school_id)
@@ -299,7 +248,7 @@ async def get_students(
 async def get_statistics_summary(
     db: AsyncSession = Depends(get_db),
     current_user = Depends(require_president_or_supervisor),
-    school_id: int = None
+    school_id: Optional[int] = Query(None)
 ):
     """Get summary statistics for the president's school"""
     president_id = await get_current_president_id(current_user, db, school_id)
@@ -368,7 +317,7 @@ async def get_attendance_trend(
     limit: int = 10,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(require_president_or_supervisor),
-    school_id: int = None
+    school_id: Optional[int] = Query(None)
 ):
     """Get attendance trend over recent days"""
     president_id = await get_current_president_id(current_user, db, school_id)
@@ -429,7 +378,7 @@ async def get_top_memorizers(
     limit: int = 5,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(require_president_or_supervisor),
-    school_id: int = None
+    school_id: Optional[int] = Query(None)
 ):
     """Get top students by memorization progress"""
     president_id = await get_current_president_id(current_user, db, school_id)
@@ -478,7 +427,7 @@ async def get_top_memorizers(
 async def get_lecture_distribution(
     db: AsyncSession = Depends(get_db),
     current_user = Depends(require_president_or_supervisor),
-    school_id: int = None
+    school_id: Optional[int] = Query(None)
 ):
     """Get student distribution across lectures"""
     president_id = await get_current_president_id(current_user, db, school_id)
@@ -537,7 +486,7 @@ async def get_president_achievement_breakdown(
     end_date: str | None = None,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(require_president_or_supervisor),
-    school_id: int | None = None
+    school_id: Optional[int] = Query(None)
 ):
     president_id = await get_current_president_id(current_user, db, school_id)
     
@@ -577,7 +526,7 @@ async def get_president_attendance_breakdown(
     end_date: str | None = None,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(require_president_or_supervisor),
-    school_id: int | None = None
+    school_id: Optional[int] = Query(None)
 ):
     president_id = await get_current_president_id(current_user, db, school_id)
     
@@ -616,7 +565,7 @@ async def get_president_halqa_breakdown(
     end_date: str | None = None,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(require_president_or_supervisor),
-    school_id: int | None = None
+    school_id: Optional[int] = Query(None)
 ):
     president_id = await get_current_president_id(current_user, db, school_id)
     
@@ -664,7 +613,7 @@ async def get_president_progress_timeline(
     end_date: str | None = None,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(require_president_or_supervisor),
-    school_id: int | None = None
+    school_id: Optional[int] = Query(None)
 ):
     president_id = await get_current_president_id(current_user, db, school_id)
     

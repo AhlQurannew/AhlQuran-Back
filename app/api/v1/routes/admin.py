@@ -217,78 +217,91 @@ async def get_all_schools(
     admin = Depends(require_admin)
 ):
     """
-    ADMIN ONLY: Get all schools with detailed president information and role counts.
+    ADMIN ONLY: Get all schools with detailed chief supervisor information and role counts.
     """
     from sqlalchemy import func as sql_func
     from app.models.student import Student
     from app.models.teacher import Teacher
     from app.models.supervisor import Supervisor
     from app.models.guardian import Guardian
+    from app.models.chief_supervisor import ChiefSupervisor
     
     logger.info(f"[SCHOOLS] Admin requesting all schools")
     
     try:
-        # Get all approved presidents with their schools
+        # Get all presidents (school placeholders)
         result = await db.execute(
-            select(User)
-            .join(President, President.user_id == User.id)
-            .options(selectinload(User.president))
-            .where(User.role == UserRoleEnum.PRESIDENT)
-            .where(User.is_active == True)
+            select(President)
+            .options(
+                selectinload(President.user),
+                selectinload(President.chief_supervisors).selectinload(ChiefSupervisor.user)
+            )
             .order_by(President.school_name)
         )
         presidents = result.scalars().all()
         
-        logger.info(f"[SCHOOLS] Found {len(presidents)} approved presidents")
+        logger.info(f"[SCHOOLS] Found {len(presidents)} schools")
         
         schools_list = []
         
-        for user in presidents:
+        for president in presidents:
             # Get student count for this president
             student_result = await db.execute(
                 select(sql_func.count(Student.id))
-                .where(Student.president_id == user.president.id)
+                .where(Student.president_id == president.id)
             )
             student_count = student_result.scalar() or 0
             
             # Get teacher count for this president
             teacher_result = await db.execute(
                 select(sql_func.count(Teacher.id))
-                .where(Teacher.president_id == user.president.id)
+                .where(Teacher.president_id == president.id)
             )
             teacher_count = teacher_result.scalar() or 0
             
             # Get supervisor count for this president
             supervisor_result = await db.execute(
                 select(sql_func.count(Supervisor.id))
-                .where(Supervisor.president_id == user.president.id)
+                .where(Supervisor.president_id == president.id)
             )
             supervisor_count = supervisor_result.scalar() or 0
             
             # Get guardian count for this president
             guardian_result = await db.execute(
                 select(sql_func.count(Guardian.id))
-                .where(Guardian.president_id == user.president.id)
+                .where(Guardian.president_id == president.id)
             )
             guardian_count = guardian_result.scalar() or 0
             
-            president_name = f"{user.firstname or ''} {user.lastname or ''}".strip() or "غير محدد"
+            # Use the Chief Supervisor's real email and name (not the placeholder president)
+            chief = president.chief_supervisors[0] if president.chief_supervisors else None
+            if chief and chief.user:
+                display_email = chief.user.email
+                display_name = f"{chief.user.firstname or ''} {chief.user.lastname or ''}".strip()
+                is_active = chief.user.is_active
+                chief_user_id = chief.user.id
+            else:
+                # Fallback to placeholder president data
+                display_email = president.user.email if president.user else "غير محدد"
+                display_name = f"{president.user.firstname or ''} {president.user.lastname or ''}".strip() if president.user else "غير محدد"
+                is_active = president.user.is_active if president.user else False
+                chief_user_id = president.user_id
             
             schools_list.append({
-                "id": user.president.id,
-                "user_id": user.id,
-                "school_name": user.president.school_name,
-                "president_name": president_name,
-                "email": user.email,
-                "phone_number": user.president.phone_number or "غير محدد",
+                "id": president.id,
+                "user_id": chief_user_id,
+                "school_name": president.school_name,
+                "president_name": display_name or "غير محدد",
+                "email": display_email,
+                "phone_number": president.phone_number or "غير محدد",
                 "student_count": student_count,
                 "teacher_count": teacher_count,
                 "supervisor_count": supervisor_count,
                 "guardian_count": guardian_count,
-                "president_count": 1,  # Always 1 president per school
-                "approval_date": user.president.approval_date.isoformat() if user.president.approval_date else None,
-                "created_at": user.president.created_at.isoformat() if user.president.created_at else None,
-                "is_active": user.is_active
+                "president_count": 1,
+                "approval_date": president.approval_date.isoformat() if president.approval_date else None,
+                "created_at": president.created_at.isoformat() if president.created_at else None,
+                "is_active": is_active
             })
         
         logger.info(f"[SCHOOLS] Returning {len(schools_list)} schools")
@@ -313,14 +326,20 @@ async def update_school(
     admin = Depends(require_admin)
 ):
     """
-    ADMIN ONLY: Update school and president information.
+    ADMIN ONLY: Update school and chief supervisor information.
     """
+    from app.models.chief_supervisor import ChiefSupervisor
     logger.info(f"[UPDATE SCHOOL] Admin updating school ID: {school_id}")
     
     try:
-        # Get the president
+        # Get the president (school placeholder)
         result = await db.execute(
-            select(President).options(selectinload(President.user)).where(President.id == school_id)
+            select(President)
+            .options(
+                selectinload(President.user),
+                selectinload(President.chief_supervisors).selectinload(ChiefSupervisor.user)
+            )
+            .where(President.id == school_id)
         )
         president = result.scalar_one_or_none()
         
@@ -338,19 +357,27 @@ async def update_school(
         if 'phone_number' in school_data:
             president.phone_number = school_data['phone_number']
         
-        # Update president user info
-        if 'president_firstname' in school_data:
-            president.user.firstname = school_data['president_firstname']
+        # Target the chief supervisor's user (real account), not the placeholder president
+        chief = president.chief_supervisors[0] if president.chief_supervisors else None
+        target_user = chief.user if chief and chief.user else president.user
         
-        if 'president_lastname' in school_data:
-            president.user.lastname = school_data['president_lastname']
+        # Update name fields (sent as chief_supervisor_firstname / chief_supervisor_lastname from frontend)
+        if 'chief_supervisor_firstname' in school_data:
+            target_user.firstname = school_data['chief_supervisor_firstname']
+        elif 'president_firstname' in school_data:
+            target_user.firstname = school_data['president_firstname']
+        
+        if 'chief_supervisor_lastname' in school_data:
+            target_user.lastname = school_data['chief_supervisor_lastname']
+        elif 'president_lastname' in school_data:
+            target_user.lastname = school_data['president_lastname']
         
         if 'email' in school_data:
-            # Check if new email already exists
-            result = await db.execute(
-                select(User).where(User.email == school_data['email']).where(User.id != president.user_id)
+            # Check if new email already exists on a different user
+            email_check = await db.execute(
+                select(User).where(User.email == school_data['email']).where(User.id != target_user.id)
             )
-            existing_user = result.scalar_one_or_none()
+            existing_user = email_check.scalar_one_or_none()
             
             if existing_user:
                 raise HTTPException(
@@ -358,12 +385,12 @@ async def update_school(
                     detail="Email already exists"
                 )
             
-            president.user.email = school_data['email']
+            target_user.email = school_data['email']
         
         # Update password if provided
         if 'password' in school_data and school_data['password']:
             from app.core.security import get_password_hash
-            president.user.hashed_password = get_password_hash(school_data['password'])
+            target_user.hashed_password = get_password_hash(school_data['password'])
         
         await db.commit()
         await db.refresh(president)
@@ -375,8 +402,8 @@ async def update_school(
             "school": {
                 "id": president.id,
                 "school_name": president.school_name,
-                "president_name": f"{president.user.firstname} {president.user.lastname}",
-                "email": president.user.email,
+                "president_name": f"{target_user.firstname} {target_user.lastname}",
+                "email": target_user.email,
                 "phone_number": president.phone_number
             }
         }

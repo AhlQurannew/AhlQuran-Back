@@ -9,6 +9,7 @@ from enum import Enum
 class SenderRole(str, Enum):
     TEACHER = "teacher"
     SUPERVISOR = "supervisor"
+    CHIEF_SUPERVISOR = "chief_supervisor"
     PRESIDENT = "president"
     
     def __str__(self):

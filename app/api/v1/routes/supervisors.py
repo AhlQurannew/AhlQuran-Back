@@ -2,7 +2,8 @@
 API endpoints for managing supervisors (المشرفين)
 Only accessible by Chief Supervisors (المشرف العام) and Presidents
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
@@ -29,6 +30,7 @@ supervisorRouter = APIRouter()
 @supervisorRouter.post("/", response_model=SupervisorResponse, status_code=status.HTTP_201_CREATED)
 async def create_supervisor(
     supervisor_data: SupervisorCreate,
+    school_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_president_or_chief_supervisor)
 ):
@@ -36,7 +38,7 @@ async def create_supervisor(
     logger.debug(f"supervisor data: {supervisor_data} \n current user: {current_user}")
 
     # Get president ID
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id=school_id)
 
     # Check if email already exists
     result = await db.execute(
@@ -92,13 +94,16 @@ async def create_supervisor(
 async def list_supervisors(
     skip: int = 0,
     limit: int = 100,
+    school_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_president_or_chief_supervisor)
 ):
-    """Get all supervisors. Only presidents and chief supervisors can view supervisors."""
+    """Get all supervisors. Only presidents and chief supervisors can view supervisors.
+    Admin users must pass school_id to specify which school's supervisors to list.
+    """
 
-    # Get president ID for filtering
-    president_id = await get_president_id_for_user(current_user, db)
+    # Get president ID for filtering (admin must pass school_id)
+    president_id = await get_president_id_for_user(current_user, db, school_id=school_id)
 
     result = await db.execute(
         select(Supervisor)
@@ -134,13 +139,14 @@ async def list_supervisors(
 @supervisorRouter.get("/{supervisor_id}", response_model=SupervisorResponse)
 async def get_supervisor(
     supervisor_id: int,
+    school_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_president_or_chief_supervisor)
 ):
     """Get supervisor by ID"""
     
     # Get president ID for filtering
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id=school_id)
 
     result = await db.execute(
         select(Supervisor)
@@ -170,13 +176,14 @@ async def get_supervisor(
 async def update_supervisor(
     supervisor_id: int,
     supervisor_data: SupervisorUpdate,
+    school_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_president_or_chief_supervisor)
 ):
     """Update supervisor information"""
 
     # Get president ID for filtering
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id=school_id)
 
     result = await db.execute(
         select(Supervisor)
@@ -235,13 +242,14 @@ async def update_supervisor(
 @supervisorRouter.delete("/{supervisor_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_supervisor(
     supervisor_id: int,
+    school_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_president_or_chief_supervisor)
 ):
     """Delete a supervisor"""
 
     # Get president ID for filtering
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id=school_id)
 
     result = await db.execute(
         select(Supervisor).where(Supervisor.id == supervisor_id, Supervisor.president_id == president_id)

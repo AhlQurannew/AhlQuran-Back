@@ -1,7 +1,7 @@
-from sqlalchemy import String, ForeignKey, DateTime, Boolean, func, Integer
+﻿from sqlalchemy import String, ForeignKey, DateTime, Boolean, func, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 from app.db.base import Base
 
@@ -23,6 +23,11 @@ class President(Base):
     # Relationships
     user: Mapped["User"] = relationship(back_populates="president")
     admin: Mapped[Optional["Admin"]] = relationship("Admin", foreign_keys=[approved_by])
+    chief_supervisors: Mapped[List["ChiefSupervisor"]] = relationship(
+        "ChiefSupervisor",
+        foreign_keys="ChiefSupervisor.president_id",
+        back_populates="president"
+    )
 
     def __repr__(self) -> str:
         return f"President(id={self.id}, school={self.school_name}, verified={self.is_verified})"

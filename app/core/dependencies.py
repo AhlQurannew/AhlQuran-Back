@@ -274,9 +274,9 @@ async def require_president_or_admin(
         logger.info(f"Admin {current_user.id} accessing president endpoint")
         return current_user
     
-    # If it's a User with PRESIDENT role, allow access
-    if hasattr(current_user, 'role') and current_user.role == UserRoleEnum.PRESIDENT:
-        logger.info(f"President {current_user.id} accessing endpoint")
+    # If it's a User with PRESIDENT or CHIEF_SUPERVISOR role, allow access
+    if hasattr(current_user, 'role') and current_user.role in [UserRoleEnum.PRESIDENT, UserRoleEnum.CHIEF_SUPERVISOR]:
+        logger.info(f"President/ChiefSupervisor {current_user.id} accessing endpoint")
         return current_user
     
     raise HTTPException(

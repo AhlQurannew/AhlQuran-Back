@@ -527,7 +527,15 @@ async def admin_login(
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
-        "message" : "you are logged in as an admin !"
+        "message" : "you are logged in as an admin !",
+        "user": {
+            "id": admin.id,
+            "email": admin.user,
+            "firstname": "الرئيس",
+            "lastname": "",
+            "role": "ADMIN",
+            "is_active": True
+        }
     }
 
 

@@ -30,8 +30,9 @@ async def get_president_id_for_user(
     from app.models.user import UserRoleEnum
     from app.models.admin import Admin
     
-    # Handle admin users
-    if isinstance(current_user, Admin):
+    # Handle admin users (both real Admin objects and AdminAsUser role-override objects)
+    is_admin = isinstance(current_user, Admin) or (hasattr(current_user, 'is_admin') and current_user.is_admin)
+    if is_admin:
         if school_id is None:
             raise HTTPException(
                 status_code=400,

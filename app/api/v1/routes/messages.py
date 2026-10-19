@@ -120,7 +120,9 @@ async def create_message(
         sender_id = current_user.id
         sender_name = f"{getattr(current_user, 'firstname', '')} {getattr(current_user, 'lastname', '')}".strip() or "مستخدم"
         raw_role = str(message_data.sender_role).lower()
-        if raw_role in ("supervisor", "chief_supervisor"):
+        if raw_role == "chief_supervisor":
+            sender_role = SenderRole.CHIEF_SUPERVISOR
+        elif raw_role == "supervisor":
             sender_role = SenderRole.SUPERVISOR
         elif raw_role in ("president", "admin"):
             sender_role = SenderRole.PRESIDENT

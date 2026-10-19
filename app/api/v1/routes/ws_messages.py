@@ -229,13 +229,15 @@ async def handle_websocket_connection(websocket: WebSocket, token: str, school_i
                 if not msg_text:
                     continue
                 
-                allowed_roles = {"teacher", "supervisor", "president"}
+                allowed_roles = {"teacher", "supervisor", "chief_supervisor", "president"}
                 if sender_role_raw not in allowed_roles:
                     if is_admin_user:
                         sender_role_raw = "president"
                     else:
                         u_role = user.role.value.lower() if hasattr(user.role, "value") else str(user.role).lower()
-                        if u_role in ("chief_supervisor", "chiefsupervisor", "supervisor"):
+                        if u_role == "chief_supervisor":
+                            sender_role_raw = "chief_supervisor"
+                        elif u_role == "supervisor":
                             sender_role_raw = "supervisor"
                         elif u_role in ("admin", "president"):
                             sender_role_raw = "president"

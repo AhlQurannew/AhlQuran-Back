@@ -6,6 +6,7 @@ from enum import Enum
 class SenderRole(str, Enum):
     TEACHER = "teacher"
     SUPERVISOR = "supervisor"
+    CHIEF_SUPERVISOR = "chief_supervisor"
     PRESIDENT = "president"
     
     def __str__(self):
@@ -21,7 +22,7 @@ class MessageResponse(BaseModel):
     id: int
     sender_id: int
     sender_name: str
-    sender_role: SenderRole
+    sender_role: str  # plain str to handle all SenderRole enum values including chief_supervisor
     message: str
     created_at: datetime
 

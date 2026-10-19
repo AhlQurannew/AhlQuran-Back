@@ -7,7 +7,7 @@ from app.models.user import User, UserRoleEnum
 from app.models.supervisor import Supervisor
 from app.schemas.supervisor import SupervisorCreate, SupervisorUpdate, SupervisorResponse, SupervisorList
 from app.core.dependencies import get_current_user, require_president
-from app.core.multi_tenancy import get_president_id_for_user
+from app.core.multi_tenancy import get_president_id_for_user, get_created_by_user_id
 from app.core.security import get_password_hash
 import logging
 
@@ -69,7 +69,7 @@ async def create_supervisor(
     new_supervisor = Supervisor(
         user_id=new_user.id,
         president_id=president_id,
-        created_by_id=current_user.id
+        created_by_id=get_created_by_user_id(current_user)
     )
 
     db.add(new_supervisor)

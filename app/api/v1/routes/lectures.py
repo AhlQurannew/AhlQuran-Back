@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import joinedload
-from typing import List
+from typing import List, Optional
 
 from app.db.session import get_db
 from app.core.dependencies import require_president_or_supervisor, require_president_or_admin
@@ -63,7 +63,7 @@ async def get_lectures_basic(
 async def get_all_lectures(
     db: AsyncSession = Depends(get_db),
     current_user = Depends(require_president_or_supervisor),  # Allow supervisors
-    school_id: int = None
+    school_id: Optional[int] = Query(None)
 ):
     """
     Get all lectures with full details including teachers, schedules, and student count
@@ -201,7 +201,7 @@ async def create_lecture(
     lecture_data: LectureCreate,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(require_president_or_supervisor),  # Allow supervisors
-    school_id: int = None
+    school_id: Optional[int] = Query(None)
 ):
     """
     Create a new lecture with teachers and schedules
@@ -300,7 +300,7 @@ async def update_lecture(
     lecture_data: LectureUpdate,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(require_president_or_supervisor),  # Allow supervisors
-    school_id: int = None
+    school_id: Optional[int] = Query(None)
 ):
     """
     Update an existing lecture

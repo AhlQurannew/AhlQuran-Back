@@ -17,7 +17,7 @@ from app.schemas.statistics import (
 )
 from app.core.dependencies import require_president_or_supervisor, require_teacher, require_president_or_admin
 from app.core.security import get_password_hash
-from app.core.multi_tenancy import get_president_id_for_user
+from app.core.multi_tenancy import get_president_id_for_user, get_created_by_user_id
 from app.core.quran_pages import calculate_achievement_pages
 from datetime import datetime, date
 from typing import Optional, List
@@ -931,7 +931,7 @@ async def create_teacher(
         user_id=new_user.id,
         president_id=president_id,
         riwaya=teacher_data.riwaya,
-        created_by_id=current_user.id
+        created_by_id=get_created_by_user_id(current_user)
     )
 
     db.add(new_teacher)

@@ -20,7 +20,7 @@ from app.schemas.guardian_student_data import (
 )
 from app.core.dependencies import require_guardian, require_president_or_supervisor
 from app.core.security import get_password_hash
-from app.core.multi_tenancy import get_president_id_for_user
+from app.core.multi_tenancy import get_president_id_for_user, get_created_by_user_id
 from typing import Tuple, List, Optional
 from datetime import datetime
 from fastapi import Query
@@ -881,7 +881,7 @@ async def create_guardian(
         job=guardian_data.guardian_info.job,
         address=guardian_data.guardian_info.address,
         student_id=guardian_data.student_id,
-        created_by_id=current_user.id
+        created_by_id=get_created_by_user_id(current_user)
     )
     db.add(new_guardian)
     await db.commit()

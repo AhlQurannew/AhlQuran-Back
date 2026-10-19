@@ -28,6 +28,7 @@ from app.schemas.statistics import (
     LectureDistributionResponse
 )
 from app.core.dependencies import require_president, require_president_or_admin, require_president_or_supervisor
+from app.core.multi_tenancy import get_created_by_user_id
 from app.core.quran_pages import calculate_achievement_pages
 
 
@@ -105,8 +106,7 @@ async def add_supervisor(
     president_id = await get_current_president_id(current_user, db, school_id)
     
     # Get the user_id for created_by_id
-    from app.models.admin import Admin
-    created_by_user_id = current_user.id if not isinstance(current_user, Admin) else None
+    created_by_user_id = get_created_by_user_id(current_user)
     
     # Check if email already exists
     existing_user = await db.execute(
@@ -181,7 +181,7 @@ async def register_teacher(
     new_teacher = Teacher(
         user_id=new_user.id,
         riwaya=teacher_data.riwaya,
-        created_by_id=current_user.id,
+        created_by_id=get_created_by_user_id(current_user),
         president_id=president_id
     )
     db.add(new_teacher)
@@ -235,7 +235,7 @@ async def register_student(
         parent_name=student_data.parent_name,
         parent_phone=student_data.parent_phone,
         guardian_email=student_data.guardian_email,
-        created_by_id=current_user.id,
+        created_by_id=get_created_by_user_id(current_user),
         president_id=president_id
     )
     db.add(new_student)

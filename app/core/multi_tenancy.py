@@ -1,6 +1,7 @@
 """
 Multi-tenancy helper functions for president-based data isolation
 """
+from typing import Optional
 from fastapi import HTTPException, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,20 @@ from app.models.supervisor import Supervisor
 from app.models.teacher import Teacher
 from app.models.user import User
 from app.core.dependencies import get_current_user, get_db
+
+
+def get_created_by_user_id(current_user) -> Optional[int]:
+    """
+    Returns user ID for created_by_id foreign key field, or None if the current user is an Admin
+    (since Admin IDs are in the 'admins' table, not 'users', and created_by_id references users.id).
+    """
+    from app.models.admin import Admin
+    if isinstance(current_user, Admin) or getattr(current_user, 'is_admin', False):
+        return None
+    role = getattr(current_user, 'role', None)
+    if role == "admin" or str(role).lower() == "admin":
+        return None
+    return getattr(current_user, 'id', None)
 
 
 async def get_president_id_for_user(

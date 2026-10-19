@@ -19,7 +19,7 @@ from app.schemas.achievement import AchievementCreate, AchievementUpdate, Achiev
 from app.schemas.attendance import AttendanceCreate, AttendanceUpdate, AttendanceResponse, AttendanceList
 from app.schemas.student_full import StudentCreateFull
 from app.core.dependencies import get_current_user, require_president_or_supervisor, require_president_or_admin, require_teacher_or_above
-from app.core.multi_tenancy import get_president_id_for_user
+from app.core.multi_tenancy import get_president_id_for_user, get_created_by_user_id
 from app.core.security import get_password_hash
 
 import logging
@@ -174,7 +174,7 @@ async def create_student(
         parent_name=parent_name if parent_name else None,
         parent_phone=student_data.contactInfo.phone_number,
         guardian_email=student_data.guardian.email,
-        created_by_id=current_user.id,
+        created_by_id=get_created_by_user_id(current_user),
         president_id=president_id,
         Golden=False,
         

@@ -1,4 +1,4 @@
-﻿"""
+"""
 WebSocket endpoint and manager for real-time group chat.
 Features:
   - Multi-tenancy: isolated room per president_id.
@@ -41,7 +41,7 @@ async def get_president_id_for_user(user, db: AsyncSession, school_id: int | Non
         pres = result.scalar_one_or_none()
         return pres.id if pres else 1
 
-    role = user.role.value if hasattr(user.role, "value") else str(user.role)
+    role = (user.role.value if hasattr(user.role, "value") else str(user.role)).upper()
     
     if role == "PRESIDENT":
         result = await db.execute(select(President).where(President.user_id == user.id))
@@ -51,7 +51,11 @@ async def get_president_id_for_user(user, db: AsyncSession, school_id: int | Non
     if role == "TEACHER":
         result = await db.execute(select(Teacher).where(Teacher.user_id == user.id))
         teacher = result.scalar_one_or_none()
-        return teacher.president_id if teacher else None
+        if teacher and teacher.president_id:
+            return teacher.president_id
+        result = await db.execute(select(President).limit(1))
+        pres = result.scalar_one_or_none()
+        return pres.id if pres else 1
     
     if role == "SUPERVISOR":
         result = await db.execute(select(Supervisor).where(Supervisor.user_id == user.id))
@@ -60,9 +64,9 @@ async def get_president_id_for_user(user, db: AsyncSession, school_id: int | Non
             return sup.president_id
         result = await db.execute(select(President).limit(1))
         pres = result.scalar_one_or_none()
-        return pres.id if pres else None
+        return pres.id if pres else 1
     
-    if role in ("CHIEF_SUPERVISOR", "chief_supervisor"):
+    if role in ("CHIEF_SUPERVISOR", "CHIEFSUPERVISOR"):
         from app.models.chief_supervisor import ChiefSupervisor
         result = await db.execute(select(ChiefSupervisor).where(ChiefSupervisor.user_id == user.id))
         cs = result.scalar_one_or_none()
@@ -75,9 +79,11 @@ async def get_president_id_for_user(user, db: AsyncSession, school_id: int | Non
             return sup.president_id
         result = await db.execute(select(President).limit(1))
         pres = result.scalar_one_or_none()
-        return pres.id if pres else None
+        return pres.id if pres else 1
     
-    return None
+    result = await db.execute(select(President).limit(1))
+    pres = result.scalar_one_or_none()
+    return pres.id if pres else 1
 
 
 async def authenticate_ws_token(token: str, db: AsyncSession):
@@ -177,6 +183,11 @@ async def handle_websocket_connection(websocket: WebSocket, token: str, school_i
                     continue
                 
                 event_type = payload.get("type", "message")
+                
+                # ── Ping / Pong Keepalive ────────────────────────
+                if event_type == "ping":
+                    await websocket.send_text(json.dumps({"type": "pong"}))
+                    continue
                 
                 # ── Typing Indicator ──────────────────────────────
                 if event_type == "typing":

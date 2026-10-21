@@ -1,3 +1,18 @@
+"""
+@file dependencies.py
+@description Dependency injection functions for FastAPI endpoints
+
+This module provides authentication and authorization dependencies used across all API routes.
+Key features:
+- JWT token validation and user extraction
+- Role-based access control (RBAC)
+- Admin role override system (allows admin to act as CHIEF_SUPERVISOR)
+- Multi-tenant user context (president, supervisor, teacher)
+
+@author Ahl El Quran Team
+@version 1.0.0
+"""
+
 from fastapi import Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -9,15 +24,52 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-
 async def get_current_user(
-        request: Request,  # ← Use Request instead of Cookie
+        request: Request,  # Request object to access headers and cookies
         db: AsyncSession = Depends(get_db)
 ):
-    # Try to get token from cookies first
+    """
+    Extract and validate the current authenticated user from JWT token.
+    
+    This is the core authentication dependency used by all protected endpoints.
+    It supports both cookie-based and header-based authentication.
+    
+    Token Sources (in order of priority):
+    1. Cookie: access_token
+    2. Header: Authorization: Bearer <token>
+    
+    Token Types:
+    - "admin": Returns Admin object (or AdminAsUser if role override header present)
+    - "access": Returns User object (president, supervisor, teacher, student, guardian)
+    
+    Admin Role Override:
+    If token type is "admin" and X-Role-Override header is present:
+    - Creates AdminAsUser object with specified role (e.g., CHIEF_SUPERVISOR)
+    - Adds is_admin=True flag for special handling in permission checks
+    - Requires school_id parameter in endpoints to scope operations
+    
+    Args:
+        request (Request): FastAPI request object
+        db (AsyncSession): Database session from dependency
+        
+    Returns:
+        User | Admin | AdminAsUser: Authenticated user object
+        
+    Raises:
+        HTTPException 401: If token is missing, invalid, or expired
+        HTTPException 401: If user/admin not found in database
+        
+    Example:
+        @router.get("/students")
+        async def get_students(current_user: User = Depends(get_current_user)):
+            # current_user is now authenticated and validated
+            return await fetch_students(current_user.id)
+    """
+    
+    # Try to get token from cookies first (web browsers)
     access_token = request.cookies.get("access_token")
     
-    # If not in cookies, try Authorization header
+    # If not in cookies, try Authorization header (mobile apps, Postman, etc.)
     if not access_token:
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):
@@ -31,15 +83,16 @@ async def get_current_user(
             )
 
     logger.info(f"Received credentials: {access_token[:50]}...")
-    # Remove "Bearer " prefix if present
+    
+    # Remove "Bearer " prefix if present (from Authorization header)
     token = access_token.replace("Bearer ", "")
-
     logger.info(f"Token after removing Bearer: {token[:50]}...")
-    # Decode token
+    
+    # Decode JWT token and extract payload
     payload = decode_token(token)
     logger.info(f"Decoded payload: {payload}")
     
-    # Check if token decode failed
+    # Check if token decode failed (invalid signature, expired, etc.)
     if payload is None:
         logger.error("Token decode failed - payload is None")
         raise HTTPException(
@@ -48,14 +101,16 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Check token type
+    # Extract token type (admin or access) and role
     token_type = payload.get("role")
     logger.info(f"Token role: {token_type}")
     
-    # Log all headers for debugging
+    # Log all request headers for debugging (useful for troubleshooting role override)
     logger.info(f"Request headers: {dict(request.headers)}")
 
-    # For admin tokens, check if type is "admin"
+    # ============================================================
+    # ADMIN TOKEN HANDLING (token_type == "admin")
+    # ============================================================
     if token_type == "admin":
         from app.models.admin import Admin
         admin_id = payload.get("admin_id")
@@ -67,6 +122,7 @@ async def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        # Fetch admin from database
         result = await db.execute(
             select(Admin).where(Admin.id == admin_id)
         )
@@ -79,25 +135,40 @@ async def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        # Check for role override header (admin viewing as CHIEF_SUPERVISOR)
+        # ============================================================
+        # ADMIN ROLE OVERRIDE SYSTEM
+        # ============================================================
+        # Check for X-Role-Override header (sent by frontend when admin views a school)
+        # This allows admin to act as CHIEF_SUPERVISOR for a specific school
         role_override = request.headers.get("X-Role-Override")
         logger.info(f"Role override header: {role_override}")
+        
         if role_override:
             logger.info(f"Admin role override detected: {role_override}")
-            # Create a User-like object with the admin's info but CHIEF_SUPERVISOR role
+            
+            # Create a User-like object with admin's info but CHIEF_SUPERVISOR role
+            # This object will pass role checks like require_president_or_supervisor()
             class AdminAsUser:
+                """
+                Special user object for admin role override.
+                Behaves like a User but has is_admin=True flag.
+                """
                 def __init__(self, admin, role):
-                    self.id = admin.id
-                    self.role = UserRoleEnum(role)
-                    self.is_active = True
-                    self.is_admin = True
-                    self._admin_obj = admin
+                    self.id = admin.id                          # Admin's ID
+                    self.role = UserRoleEnum(role)              # Override role (CHIEF_SUPERVISOR)
+                    self.is_active = True                       # Always active
+                    self.is_admin = True                        # Special flag for permission checks
+                    self._admin_obj = admin                     # Reference to original admin object
             
             return AdminAsUser(admin, role_override)
         
+        # No role override - return admin as-is
         return admin
 
-    # For user tokens
+    # ============================================================
+    # USER TOKEN HANDLING (token_type == "access")
+    # ============================================================
+    # For user tokens (president, supervisor, teacher, student, guardian)
     user_id = payload.get("user_id")
     if user_id is None:
         logger.error("No user_id in token payload")

@@ -11,6 +11,7 @@ from .lectures import lectureRouter
 from .guardian import guardianRouter
 from .messages import messageRouter
 from .ws_messages import ws_router
+from .seed import seedRouter
 
 def register_routes(app):
     routes = [
@@ -24,6 +25,7 @@ def register_routes(app):
         (lectureRouter, "/lectures", ["Lectures"]),
         (guardianRouter, "/guardians", ["Guardians"]),
         (messageRouter, "/messages", ["Messages"]),
+        (seedRouter, "/seed", ["Database Seed"]),
     ]
 
     for router, prefix, tags in routes:

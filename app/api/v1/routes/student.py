@@ -492,10 +492,12 @@ async def delete_student(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_president_or_supervisor)
 ):
-    """Delete a student. Only presidents and supervisors can delete students."""
+    """Delete a student and their associated user account. Only presidents and supervisors can delete students."""
 
     result = await db.execute(
-        select(Student).where(Student.id == student_id)
+        select(Student)
+        .options(selectinload(Student.user))
+        .where(Student.id == student_id)
     )
     student = result.scalar_one_or_none()
 
@@ -505,11 +507,16 @@ async def delete_student(
             detail=f"Student with ID {student_id} not found"
         )
 
-    # Delete the student (will cascade to user due to relationship)
+    # Store user for deletion
+    user_to_delete = student.user
+    
+    # Delete the student first
     await db.delete(student)
+    # Then delete the user to free up the email
+    await db.delete(user_to_delete)
     await db.commit()
 
-    logger.info(f"Student {student_id} deleted by user {current_user.id}")
+    logger.info(f"Student {student_id} and user {user_to_delete.id} deleted by user {current_user.id}")
 
     return None
 

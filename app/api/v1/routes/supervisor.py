@@ -206,10 +206,12 @@ async def delete_supervisor(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_president)
 ):
-    """Delete a supervisor. Only presidents can delete supervisors."""
+    """Delete a supervisor and their associated user account. Only presidents can delete supervisors."""
 
     result = await db.execute(
-        select(Supervisor).where(Supervisor.id == supervisor_id)
+        select(Supervisor)
+        .options(selectinload(Supervisor.user))
+        .where(Supervisor.id == supervisor_id)
     )
     supervisor = result.scalar_one_or_none()
 
@@ -219,10 +221,15 @@ async def delete_supervisor(
             detail=f"Supervisor with ID {supervisor_id} not found"
         )
 
-    # Delete the supervisor (will cascade to user due to relationship)
+    # Store user for deletion
+    user_to_delete = supervisor.user
+    
+    # Delete the supervisor first
     await db.delete(supervisor)
+    # Then delete the user to free up the email
+    await db.delete(user_to_delete)
     await db.commit()
 
-    logger.info(f"Supervisor {supervisor_id} deleted by user {current_user.id}")
+    logger.info(f"Supervisor {supervisor_id} and user {user_to_delete.id} deleted by user {current_user.id}")
 
     return None

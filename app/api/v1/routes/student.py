@@ -31,6 +31,7 @@ from app.core.dependencies import (
     require_school_management_access,
     require_teacher_or_school_manager,
 )
+from app.core.account_lifecycle import restore_orphaned_account
 from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 from app.core.security import get_password_hash
 from app.core.config import settings
@@ -293,30 +294,30 @@ async def create_student(
     await _validate_lecture_links(
         db, [lecture.lecture_id for lecture in student_data.lectures], president_id
     )
-    
-    # Check if email already exists
-    result = await db.execute(
-        select(User).where(User.email == student_data.contactInfo.email)
-    )
-    existing_user = result.scalar_one_or_none()
 
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
+    student_email = student_data.contactInfo.email
+    if not student_email:
+        raise HTTPException(status_code=400, detail="Student email is required")
 
-    # Create user record
-    new_user = User(
+    new_user = await restore_orphaned_account(
+        db,
+        email=student_email,
         firstname=student_data.personalInfo.first_name_ar,
         lastname=student_data.personalInfo.last_name_ar,
-        email=student_data.contactInfo.email,
-        hashed_password=get_password_hash(student_data.accountInfo.passcode),
+        password=student_data.accountInfo.passcode,
         role=UserRoleEnum.STUDENT,
-        is_active=True
+        profile_model=Student,
     )
-
-    db.add(new_user)
+    if new_user is None:
+        new_user = User(
+            firstname=student_data.personalInfo.first_name_ar,
+            lastname=student_data.personalInfo.last_name_ar,
+            email=student_email,
+            hashed_password=get_password_hash(student_data.accountInfo.passcode),
+            role=UserRoleEnum.STUDENT,
+            is_active=True
+        )
+        db.add(new_user)
     await db.flush()
 
     # Create student record with president_id
@@ -710,8 +711,8 @@ async def delete_student(
     student = await _get_accessible_student(student_id, current_user, db, school_id)
 
     profile_image = student.profile_image
-    # Delete the student (will cascade to user due to relationship)
-    await db.delete(student)
+    # Remove the account itself; its profile and student-owned records cascade from it.
+    await db.delete(student.user)
     await db.commit()
     await run_in_threadpool(remove_student_profile_image, profile_image)
 

@@ -9,6 +9,7 @@ from app.schemas.supervisor import SupervisorCreate, SupervisorUpdate, Superviso
 from app.core.dependencies import (
     require_president_chief_supervisor_or_admin,
 )
+from app.core.account_lifecycle import restore_orphaned_account
 from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 from app.core.security import get_password_hash
 import logging
@@ -48,19 +49,25 @@ async def create_supervisor(
 ):
     """Create a regular supervisor within the selected school."""
     president_id = await get_president_id_for_user(current_user, db, school_id)
-    existing_user = await db.execute(select(User).where(User.email == supervisor_data.email))
-    if existing_user.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-    new_user = User(
+    new_user = await restore_orphaned_account(
+        db,
+        email=supervisor_data.email,
         firstname=supervisor_data.firstname,
         lastname=supervisor_data.lastname,
-        email=supervisor_data.email,
-        hashed_password=get_password_hash(supervisor_data.password),
+        password=supervisor_data.password,
         role=UserRoleEnum.SUPERVISOR,
-        is_active=True,
+        profile_model=Supervisor,
     )
-    db.add(new_user)
+    if new_user is None:
+        new_user = User(
+            firstname=supervisor_data.firstname,
+            lastname=supervisor_data.lastname,
+            email=supervisor_data.email,
+            hashed_password=get_password_hash(supervisor_data.password),
+            role=UserRoleEnum.SUPERVISOR,
+            is_active=True,
+        )
+        db.add(new_user)
     await db.flush()
     new_supervisor = Supervisor(
         user_id=new_user.id,
@@ -229,8 +236,8 @@ async def delete_supervisor(
 
     _ensure_regular_supervisor_target(supervisor, current_user)
 
-    # Delete the supervisor (will cascade to user due to relationship)
-    await db.delete(supervisor)
+    # Remove the account itself; its profile is a dependent record of User.
+    await db.delete(supervisor.user)
     await db.commit()
 
     logger.info(f"Supervisor {supervisor_id} deleted by user {current_user.id}")

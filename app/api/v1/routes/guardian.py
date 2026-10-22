@@ -23,6 +23,7 @@ from app.schemas.guardian_student_data import (
     StudentContext
 )
 from app.core.dependencies import require_guardian, require_school_management_access
+from app.core.account_lifecycle import restore_orphaned_account
 from app.core.security import get_password_hash
 from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 from typing import Tuple, List, Optional
@@ -898,27 +899,31 @@ async def create_guardian(
     # Get president ID (works for both presidents and supervisors)
     president_id = await get_president_id_for_user(current_user, db, school_id)
     
-    # Check if email already exists
-    existing_user = await db.execute(
-        select(User).where(User.email == guardian_data.account_info.username)
+    new_user = await restore_orphaned_account(
+        db,
+        email=guardian_data.account_info.username,
+        firstname=guardian_data.guardian_info.first_name,
+        lastname=guardian_data.guardian_info.last_name,
+        password=guardian_data.account_info.password,
+        role=UserRoleEnum.GUARDIAN,
+        profile_model=Guardian,
     )
-    if existing_user.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Email already registered")
-    
+
     linked_students = await _get_linkable_students(
         db, _guardian_student_ids(guardian_data), president_id
     )
     
-    # Create User account
-    new_user = User(
-        firstname=guardian_data.guardian_info.first_name,
-        lastname=guardian_data.guardian_info.last_name,
-        email=guardian_data.account_info.username,
-        hashed_password=get_password_hash(guardian_data.account_info.password),
-        role=UserRoleEnum.GUARDIAN,
-        is_active=True
-    )
-    db.add(new_user)
+    # Create a fresh user when there is no same-role orphan to restore.
+    if new_user is None:
+        new_user = User(
+            firstname=guardian_data.guardian_info.first_name,
+            lastname=guardian_data.guardian_info.last_name,
+            email=guardian_data.account_info.username,
+            hashed_password=get_password_hash(guardian_data.account_info.password),
+            role=UserRoleEnum.GUARDIAN,
+            is_active=True
+        )
+        db.add(new_user)
     await db.flush()  # Get new_user.id before creating guardian
     
     # Create Guardian profile with president_id
@@ -1161,7 +1166,9 @@ async def delete_guardian(
     
     # Get guardian and verify it belongs to this president
     result = await db.execute(
-        select(Guardian).where(
+        select(Guardian)
+        .options(selectinload(Guardian.user))
+        .where(
             Guardian.id == guardian_id,
             Guardian.president_id == president_id
         )
@@ -1174,8 +1181,8 @@ async def delete_guardian(
             detail="Guardian not found or does not belong to your organization"
         )
     
-    # Delete guardian (user will be deleted via CASCADE)
-    await db.delete(guardian)
+    # Delete the account so its unique email can be registered again.
+    await db.delete(guardian.user)
     await db.commit()
     
     logger.info(f"Guardian {guardian_id} deleted by user {current_user.id}")

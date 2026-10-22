@@ -9,6 +9,7 @@ from app.models.teacher import Teacher
 from app.models.lecture import Lecture
 from app.schemas.teacher import TeacherCreate, TeacherUpdate, TeacherResponse, TeacherList
 from app.core.dependencies import require_school_management_access, require_teacher
+from app.core.account_lifecycle import restore_orphaned_account
 from app.core.security import get_password_hash
 from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 import logging
@@ -411,29 +412,25 @@ async def create_teacher(
     # Get president ID (works for both presidents and supervisors)
     president_id = await get_president_id_for_user(current_user, db, school_id)
 
-    # Check if email already exists
-    result = await db.execute(
-        select(User).where(User.email == teacher_data.email)
-    )
-    existing_user = result.scalar_one_or_none()
-
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-
-    # Create user record with TEACHER role
-    new_user = User(
+    new_user = await restore_orphaned_account(
+        db,
+        email=teacher_data.email,
         firstname=teacher_data.firstname,
         lastname=teacher_data.lastname,
-        email=teacher_data.email,
-        hashed_password=get_password_hash(teacher_data.password),
+        password=teacher_data.password,
         role=UserRoleEnum.TEACHER,
-        is_active=True
+        profile_model=Teacher,
     )
-
-    db.add(new_user)
+    if new_user is None:
+        new_user = User(
+            firstname=teacher_data.firstname,
+            lastname=teacher_data.lastname,
+            email=teacher_data.email,
+            hashed_password=get_password_hash(teacher_data.password),
+            role=UserRoleEnum.TEACHER,
+            is_active=True
+        )
+        db.add(new_user)
     await db.flush()  # Flush to get the user ID
 
     # Create teacher record with teacher-specific fields and president_id
@@ -621,7 +618,9 @@ async def delete_teacher(
 
     president_id = await get_president_id_for_user(current_user, db, school_id)
     result = await db.execute(
-        select(Teacher).where(Teacher.id == teacher_id, Teacher.president_id == president_id)
+        select(Teacher)
+        .options(selectinload(Teacher.user))
+        .where(Teacher.id == teacher_id, Teacher.president_id == president_id)
     )
     teacher = result.scalar_one_or_none()
     
@@ -631,8 +630,8 @@ async def delete_teacher(
             detail=f"Teacher with ID {teacher_id} not found"
         )
 
-    # Delete the teacher (will cascade to user due to relationship)
-    await db.delete(teacher)
+    # Remove the account itself; its profile is a dependent record of User.
+    await db.delete(teacher.user)
     await db.commit()
     
     logger.info(f"Teacher {teacher_id} deleted by user {current_user.id}")

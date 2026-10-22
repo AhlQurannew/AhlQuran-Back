@@ -33,6 +33,7 @@ from app.core.dependencies import (
     require_school_management_access,
 )
 from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
+from app.core.account_lifecycle import restore_orphaned_account
 
 
 presidentRouter = APIRouter()
@@ -65,23 +66,25 @@ async def add_supervisor(
 
     created_by_user_id = await get_creator_user_id(current_user, president_id, db)
 
-    # Check if email already exists
-    existing_user = await db.execute(
-        select(User).where(User.email == supervisor_data.email)
-    )
-    if existing_user.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-    # Create User account
-    new_user = User(
+    new_user = await restore_orphaned_account(
+        db,
+        email=supervisor_data.email,
         firstname=supervisor_data.firstname,
         lastname=supervisor_data.lastname,
-        email=supervisor_data.email,
-        hashed_password=get_password_hash(supervisor_data.password),
+        password=supervisor_data.password,
         role=UserRoleEnum.SUPERVISOR,
-        is_active=True
+        profile_model=Supervisor,
     )
-    db.add(new_user)
+    if new_user is None:
+        new_user = User(
+            firstname=supervisor_data.firstname,
+            lastname=supervisor_data.lastname,
+            email=supervisor_data.email,
+            hashed_password=get_password_hash(supervisor_data.password),
+            role=UserRoleEnum.SUPERVISOR,
+            is_active=True
+        )
+        db.add(new_user)
     await db.flush()  # Get new_user.id before creating supervisor
 
     # Create Supervisor profile with president_id
@@ -115,23 +118,25 @@ async def register_teacher(
     # Get president ID (handles both president and admin)
     president_id = await get_current_president_id(current_user, db, school_id)
 
-    # Check if email already exists
-    existing_user = await db.execute(
-        select(User).where(User.email == teacher_data.email)
-    )
-    if existing_user.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-    # Create User account
-    new_user = User(
+    new_user = await restore_orphaned_account(
+        db,
+        email=teacher_data.email,
         firstname=teacher_data.firstname,
         lastname=teacher_data.lastname,
-        email=teacher_data.email,
-        hashed_password=get_password_hash(teacher_data.password),
+        password=teacher_data.password,
         role=UserRoleEnum.TEACHER,
-        is_active=True
+        profile_model=Teacher,
     )
-    db.add(new_user)
+    if new_user is None:
+        new_user = User(
+            firstname=teacher_data.firstname,
+            lastname=teacher_data.lastname,
+            email=teacher_data.email,
+            hashed_password=get_password_hash(teacher_data.password),
+            role=UserRoleEnum.TEACHER,
+            is_active=True
+        )
+        db.add(new_user)
     await db.flush()  # Get new_user.id before creating teacher
 
     # Create Teacher profile with president_id
@@ -167,23 +172,25 @@ async def register_student(
     # Get president ID (handles both president and admin)
     president_id = await get_current_president_id(current_user, db, school_id)
 
-    # Check if email already exists
-    existing_user = await db.execute(
-        select(User).where(User.email == student_data.email)
-    )
-    if existing_user.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-    # Create User account
-    new_user = User(
+    new_user = await restore_orphaned_account(
+        db,
+        email=student_data.email,
         firstname=student_data.firstname,
         lastname=student_data.lastname,
-        email=student_data.email,
-        hashed_password=get_password_hash(student_data.password),
+        password=student_data.password,
         role=UserRoleEnum.STUDENT,
-        is_active=True
+        profile_model=Student,
     )
-    db.add(new_user)
+    if new_user is None:
+        new_user = User(
+            firstname=student_data.firstname,
+            lastname=student_data.lastname,
+            email=student_data.email,
+            hashed_password=get_password_hash(student_data.password),
+            role=UserRoleEnum.STUDENT,
+            is_active=True
+        )
+        db.add(new_user)
     await db.flush()  # Get new_user.id before creating student
 
     # Create Student profile with president_id

@@ -4,13 +4,15 @@
 
 Provide `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `DATABASE_URL`, `SECRET_KEY`, `APP_ENV=production`, `INITIAL_ADMIN_USERNAME`, and `INITIAL_ADMIN_PASSWORD` through the deployment secret manager. Use unique random secrets, URL-encode the database password in `DATABASE_URL`, and set `CORS_ORIGINS` to exact frontend origins. Keep `DEBUG=false` in every shared environment. Production bootstrap passwords must be at least 12 characters; `admin123` is rejected in production.
 
+Administrator contact emails can be saved after confirming the current password. Email changes are not verified and no email is sent in this release; the UI labels saved addresses as unverified. This address is separate from the administrator's username/login.
+
 The `.env` file and SQL backups are intentionally excluded from Git and Docker build context. Store backups outside the source tree, encrypt them, restrict access, and define retention and restore drills.
 
 ## Release
 
 1. Build and publish one immutable backend image for the release.
 2. Back up the target database and verify the backup can be read.
-3. Run the `migrate` job for that image and wait for exit status zero.
+3. Run the `migrate` job for that image and wait for exit status zero. Revision `010` adds the administrator contact-email and verification-status fields; its token table is retained for possible future verification support but is not used to send email in this release.
 4. Start or roll out the backend only after migration success.
 5. Verify `/health/ready`, authentication, and tenant-scoped read/write flows; monitor application and database errors.
 

@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     APP_ENV: Literal["development", "production"] = "production"
     DEBUG: bool = False
     UPLOAD_DIR: str = "uploads"
+
+
     @field_validator("SECRET_KEY")
     @classmethod
     def reject_known_development_secret(cls, value: str) -> str:

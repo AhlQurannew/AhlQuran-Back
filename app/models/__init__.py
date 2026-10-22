@@ -8,6 +8,7 @@ from app.models.teacher import Teacher
 from app.models.student import Student
 from app.models.guardian import Guardian
 from app.models.admin import Admin
+from app.models.admin_email_verification import AdminEmailVerification
 from app.models.session import Session
 from app.models.sessionParticipation import SessionParticipation, ParticipationStatus
 from app.models.acheivements import Achievement
@@ -27,6 +28,7 @@ __all__ = [
     "Student",
     "Guardian",
     "Admin",
+    "AdminEmailVerification",
     "Session",
     "SessionParticipation",
     "ParticipationStatus",

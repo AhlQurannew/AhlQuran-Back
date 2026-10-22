@@ -1,33 +1,44 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import func, select
-from sqlalchemy.orm import selectinload
-from datetime import timedelta
 import logging
+from datetime import timedelta
+from zoneinfo import available_timezones
 
-from app.db.session import get_db
-from app.models.admin import Admin
-from app.models.user import User, UserRoleEnum
-from app.models.president import President
-from app.models.teacher import Teacher
-from app.models.guardian import Guardian
-from app.models.supervisor import Supervisor
-from app.models.student import Student
-from app.models.account_preference import AccountPreference
-from app.core.security import create_access_token, create_refresh_token, verify_password, upgrade_password_if_needed, get_password_hash, is_password_hashed, decode_token
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
 from app.core.config import settings
+from app.core.dependencies import get_current_user, require_admin
+from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    get_password_hash,
+    is_password_hashed,
+    upgrade_password_if_needed,
+    verify_password,
+)
+from app.db.session import get_db
+from app.models.account_preference import AccountPreference
+from app.models.admin import Admin
+from app.models.guardian import Guardian
+from app.models.president import President
+from app.models.student import Student
+from app.models.supervisor import Supervisor
+from app.models.teacher import Teacher
+from app.models.user import User, UserRoleEnum
+from app.schemas.admin_settings import AdminContactEmailUpdate
 from app.schemas.auth import (
     AdminLoginReq,
-    RegisterRequest, 
-    RegisterResponse,
     LoginRequest,
-    Token,
     RefreshTokenRequest,
-    RefreshTokenResponse
+    RefreshTokenResponse,
+    RegisterRequest,
+    RegisterResponse,
+    Token,
 )
-from app.core.dependencies import get_current_user, require_admin
-from pydantic import BaseModel, ConfigDict, Field
-from zoneinfo import available_timezones
 
 
 class SettingsProfilePatch(BaseModel):
@@ -303,16 +314,18 @@ async def teacher_login(
 ):
     logger.info("Teacher login attempt")
 
-    # Find user by email AND role
+    # Email addresses are entered with inconsistent casing in practice; compare normalized values.
+    normalized_email = str(form_data.email).strip().lower()
     result = await db.execute(
         select(User).where(
-            User.email == form_data.email,
+            func.lower(User.email) == normalized_email,
             User.role == UserRoleEnum.TEACHER
         )
     )
     user = result.scalar_one_or_none()
 
     if not user:
+        logger.info("Teacher login rejected: no matching teacher account")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -321,6 +334,7 @@ async def teacher_login(
 
     # Verify password using bcrypt (with backward compatibility for plain text)
     if not verify_password(form_data.password, user.hashed_password):
+        logger.info("Teacher login rejected: password mismatch for user_id=%s", user.id)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -767,7 +781,11 @@ async def _get_account_preferences(db: AsyncSession, account: User | Admin) -> A
 
 def _profile_payload(account: User | Admin) -> dict:
     if isinstance(account, Admin):
-        return {"username": account.user}
+        return {
+            "username": account.user,
+            "email": account.email,
+            "email_verified": account.email_verified_at is not None,
+        }
 
     profile = {
         "firstname": account.firstname,
@@ -832,6 +850,54 @@ async def get_account_settings(
             "timezone": preference.timezone if preference else "Africa/Algiers",
             "reduce_motion": preference.reduce_motion if preference else False,
         },
+    }
+
+
+@authRouter.patch("/settings/email")
+async def update_admin_contact_email(
+    request: AdminContactEmailUpdate,
+    account=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not isinstance(account, Admin):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator access required")
+
+    locked_result = await db.execute(
+        select(Admin).where(Admin.id == account.id).with_for_update()
+    )
+    account = locked_result.scalar_one()
+    if not verify_password(request.current_password, account.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+
+    new_email = str(request.email).strip().lower()
+    duplicate_result = await db.execute(
+        select(Admin.id).where(
+            func.lower(Admin.email) == new_email,
+            Admin.id != account.id,
+        )
+    )
+    if duplicate_result.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This email is already in use")
+
+    if account.email and account.email.lower() == new_email:
+        return {
+            "detail": "Contact email is unchanged",
+            "email": account.email,
+            "email_verified": account.email_verified_at is not None,
+        }
+
+    account.email = new_email
+    account.email_verified_at = None
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This email is already in use") from exc
+
+    return {
+        "detail": "Contact email saved without verification",
+        "email": account.email,
+        "email_verified": False,
     }
 
 

@@ -14,15 +14,13 @@ async def get_current_user(
         request: Request,  # ← Use Request instead of Cookie
         db: AsyncSession = Depends(get_db)
 ):
-    # Try to get token from cookies first
-    access_token = request.cookies.get("access_token")
-    
-    # If not in cookies, try Authorization header
-    if not access_token:
-        auth_header = request.headers.get("Authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            access_token = auth_header
-        else:
+    # Prefer an explicit bearer token so refreshed credentials take precedence over stale cookies.
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        access_token = auth_header
+    else:
+        access_token = request.cookies.get("access_token")
+        if not access_token:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Not authenticated",

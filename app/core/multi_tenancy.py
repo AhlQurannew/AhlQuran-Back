@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.admin import Admin
+from app.models.chief_supervisor import ChiefSupervisor
 from app.models.president import President
 from app.models.supervisor import Supervisor
 from app.models.teacher import Teacher
@@ -33,21 +34,35 @@ async def get_president_id_for_user(
         result = await db.execute(
             select(President.id).where(President.user_id == current_user.id)
         )
-    elif role in (UserRoleEnum.SUPERVISOR, UserRoleEnum.CHIEF_SUPERVISOR):
+        president_id = result.scalar_one_or_none()
+    elif role == UserRoleEnum.CHIEF_SUPERVISOR:
+        # School creation stores chief supervisors separately from regular
+        # supervisors. Keep the regular-supervisor lookup as a fallback for
+        # legacy accounts created before the dedicated table was introduced.
+        result = await db.execute(
+            select(ChiefSupervisor.president_id).where(ChiefSupervisor.user_id == current_user.id)
+        )
+        president_id = result.scalar_one_or_none()
+        if president_id is None:
+            result = await db.execute(
+                select(Supervisor.president_id).where(Supervisor.user_id == current_user.id)
+            )
+            president_id = result.scalar_one_or_none()
+    elif role == UserRoleEnum.SUPERVISOR:
         result = await db.execute(
             select(Supervisor.president_id).where(Supervisor.user_id == current_user.id)
         )
+        president_id = result.scalar_one_or_none()
     elif role == UserRoleEnum.TEACHER:
         result = await db.execute(
             select(Teacher.president_id).where(Teacher.user_id == current_user.id)
         )
+        president_id = result.scalar_one_or_none()
     else:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Unable to determine organization for this user role",
         )
-
-    president_id = result.scalar_one_or_none()
     if president_id is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

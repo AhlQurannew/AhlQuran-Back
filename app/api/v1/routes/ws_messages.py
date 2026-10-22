@@ -9,16 +9,16 @@ Features:
 import json
 import logging
 from collections import defaultdict
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.multi_tenancy import get_president_id_for_user as resolve_president_id
 from app.core.security import decode_token
 from app.db.session import SessionLocal as async_session_factory
 from app.models.message import Message, SenderRole
 from app.models.user import User
-from app.models.president import President
-from app.models.teacher import Teacher
-from app.models.supervisor import Supervisor
 
 logger = logging.getLogger(__name__)
 
@@ -29,25 +29,11 @@ _groups: dict[int, set[WebSocket]] = defaultdict(set)
 
 
 async def get_president_id_for_user(user: User, db: AsyncSession) -> int | None:
-    """Resolve president_id for any authenticated user."""
-    role = user.role.value if hasattr(user.role, "value") else str(user.role)
-    
-    if role == "PRESIDENT":
-        result = await db.execute(select(President).where(President.user_id == user.id))
-        pres = result.scalar_one_or_none()
-        return pres.id if pres else None
-    
-    if role == "TEACHER":
-        result = await db.execute(select(Teacher).where(Teacher.user_id == user.id))
-        teacher = result.scalar_one_or_none()
-        return teacher.president_id if teacher else None
-    
-    if role in {"SUPERVISOR", "CHIEF_SUPERVISOR"}:
-        result = await db.execute(select(Supervisor).where(Supervisor.user_id == user.id))
-        sup = result.scalar_one_or_none()
-        return sup.president_id if sup else None
-    
-    return None
+    """Resolve the school consistently with REST endpoints."""
+    try:
+        return await resolve_president_id(user, db)
+    except HTTPException:
+        return None
 
 
 async def authenticate_ws_token(token: str, db: AsyncSession) -> User | None:

@@ -1,26 +1,16 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, cast, String
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
+from datetime import date
 from app.db.session import get_db
 from app.models.user import User, UserRoleEnum
 from app.models.teacher import Teacher
 from app.models.lecture import Lecture
-from app.models.attendance import Attendance
-from app.models.acheivements import Achievement, AchievementType
 from app.schemas.teacher import TeacherCreate, TeacherUpdate, TeacherResponse, TeacherList
-from app.schemas.statistics import (
-    StatsSummaryResponse,
-    AttendanceRecordResponse,
-    MemorizationRecordResponse,
-    LectureDistributionResponse
-)
-from app.core.dependencies import require_president_or_supervisor, require_teacher, require_president_or_admin
+from app.core.dependencies import require_school_management_access, require_teacher
 from app.core.security import get_password_hash
-from app.core.multi_tenancy import get_president_id_for_user, get_created_by_user_id
-from app.core.quran_pages import calculate_achievement_pages
-from datetime import datetime, date
-from typing import Optional, List
+from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 import logging
 
 logger = logging.getLogger(__name__)
@@ -279,7 +269,7 @@ async def get_my_student_detail(
         )
         .where(Student.id == student_id)
     )
-    student = student_result.scalar_one_or_none()
+    student = student_result.scalars().first()
     
     if not student:
         raise HTTPException(
@@ -311,10 +301,6 @@ async def get_my_lectures(
     Get all lectures assigned to the current teacher with full details.
     Returns the same format as /special/lectures for consistency.
     """
-    print("=" * 80)
-    print("MY-LECTURES ENDPOINT CALLED!")
-    print("=" * 80)
-    
     from app.schemas.lecture import LectureResponse, TeacherResponse, WeeklyScheduleResponse
     from sqlalchemy.orm import joinedload
     
@@ -409,496 +395,20 @@ async def create_teacher_session():
     return {"detail": "Session creation endpoint - to be implemented"}
 
 
-# ==================== TEACHER STATISTICS (SCOPED TO TEACHER'S EPISODES & STUDENTS) ====================
-
-def parse_date_safe(d_str: Optional[str]) -> Optional[date]:
-    """Helper to safely parse YYYY-MM-DD or DD-MM-YYYY dates"""
-    if not d_str:
-        return None
-    for fmt in ("%Y-%m-%d", "%d-%m-%Y"):
-        try:
-            return datetime.strptime(d_str.strip(), fmt).date()
-        except ValueError:
-            pass
-    return None
-
-
-async def get_current_teacher_and_lecture_ids(db: AsyncSession, current_user: User):
-    """Helper to get current teacher record and IDs of their assigned lectures"""
-    teacher_result = await db.execute(
-        select(Teacher).where(Teacher.user_id == current_user.id)
-    )
-    teacher = teacher_result.scalar_one_or_none()
-    if not teacher:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Teacher record not found for current user"
-        )
-    
-    lectures_query = await db.execute(
-        select(Lecture.id)
-        .join(Lecture.teachers)
-        .where(Teacher.id == teacher.id)
-    )
-    lecture_ids = [r[0] for r in lectures_query.all()]
-    return teacher, lecture_ids
-
-
-@teacherRouter.get("/statistics/summary", response_model=StatsSummaryResponse)
-async def get_teacher_statistics_summary(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_teacher)
-):
-    """Get summary statistics scoped ONLY to the current teacher's lectures and students."""
-    teacher, teacher_lecture_ids = await get_current_teacher_and_lecture_ids(db, current_user)
-    if not teacher_lecture_ids:
-        return {
-            "total_students": 0,
-            "total_teachers": 1,
-            "total_supervisors": 0,
-            "present_today": 0,
-            "total_pages_memorized": 0,
-            "total_lectures": 0
-        }
-    
-    # Total distinct students in this teacher's lectures
-    total_students_result = await db.execute(
-        select(func.count(func.distinct(SessionParticipation.student_id)))
-        .where(SessionParticipation.lecture_id.in_(teacher_lecture_ids))
-    )
-    total_students = total_students_result.scalar() or 0
-    
-    # Total lectures for this teacher
-    total_lectures = len(teacher_lecture_ids)
-    
-    # Students present today (DD-MM-YYYY)
-    today_str = datetime.now().strftime("%d-%m-%Y")
-    present_today_result = await db.execute(
-        select(func.count(func.distinct(Attendance.student_id)))
-        .join(SessionParticipation, Attendance.student_id == SessionParticipation.student_id)
-        .where(
-            SessionParticipation.lecture_id.in_(teacher_lecture_ids),
-            Attendance.date == today_str,
-            cast(Attendance.status, String) == "present"
-        )
-    )
-    present_today = present_today_result.scalar() or 0
-    
-    # Total pages memorized by students in this teacher's lectures
-    ach_result = await db.execute(
-        select(Achievement)
-        .join(SessionParticipation, Achievement.student_id == SessionParticipation.student_id)
-        .where(SessionParticipation.lecture_id.in_(teacher_lecture_ids))
-    )
-    achievements = ach_result.scalars().all()
-    total_pages = sum(
-        calculate_achievement_pages(ach.from_surah, ach.from_verse, ach.to_surah, ach.to_verse)
-        for ach in achievements
-    )
-    
-    return {
-        "total_students": total_students,
-        "total_teachers": 1,
-        "total_supervisors": 0,
-        "present_today": present_today,
-        "total_pages_memorized": int(round(total_pages)),
-        "total_lectures": total_lectures
-    }
-
-
-@teacherRouter.get("/statistics/attendance-trend", response_model=list[AttendanceRecordResponse])
-async def get_teacher_attendance_trend(
-    limit: int = 10,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_teacher)
-):
-    """Get attendance trend over recent days for students in this teacher's lectures."""
-    teacher, teacher_lecture_ids = await get_current_teacher_and_lecture_ids(db, current_user)
-    if not teacher_lecture_ids:
-        return []
-    
-    # Distinct dates for students in this teacher's lectures
-    dates_result = await db.execute(
-        select(Attendance.date)
-        .join(SessionParticipation, Attendance.student_id == SessionParticipation.student_id)
-        .where(SessionParticipation.lecture_id.in_(teacher_lecture_ids))
-        .distinct()
-        .order_by(Attendance.date.desc())
-        .limit(limit)
-    )
-    dates = [row[0] for row in dates_result.all()]
-    
-    attendance_data = []
-    for date_val in dates:
-        present_result = await db.execute(
-            select(func.count(Attendance.id))
-            .join(SessionParticipation, Attendance.student_id == SessionParticipation.student_id)
-            .where(
-                SessionParticipation.lecture_id.in_(teacher_lecture_ids),
-                Attendance.date == date_val,
-                cast(Attendance.status, String) == "present"
-            )
-        )
-        present = present_result.scalar() or 0
-        
-        absent_result = await db.execute(
-            select(func.count(Attendance.id))
-            .join(SessionParticipation, Attendance.student_id == SessionParticipation.student_id)
-            .where(
-                SessionParticipation.lecture_id.in_(teacher_lecture_ids),
-                Attendance.date == date_val,
-                cast(Attendance.status, String) == "absent"
-            )
-        )
-        absent = absent_result.scalar() or 0
-        
-        total = present + absent
-        percentage = round((present / total * 100), 1) if total > 0 else 0
-        
-        attendance_data.append({
-            "date": date_val,
-            "present": present,
-            "absent": absent,
-            "total": total,
-            "percentage": f"{percentage}%"
-        })
-    
-    return attendance_data
-
-
-@teacherRouter.get("/statistics/top-memorizers", response_model=list[MemorizationRecordResponse])
-async def get_teacher_top_memorizers(
-    limit: int = 5,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_teacher)
-):
-    """Get top students in this teacher's lectures by memorization progress."""
-    teacher, teacher_lecture_ids = await get_current_teacher_and_lecture_ids(db, current_user)
-    if not teacher_lecture_ids:
-        return []
-    
-    # Query distinct students in teacher's lectures
-    student_ids_query = await db.execute(
-        select(func.distinct(SessionParticipation.student_id))
-        .where(SessionParticipation.lecture_id.in_(teacher_lecture_ids))
-    )
-    student_ids = [r[0] for r in student_ids_query.all()]
-    if not student_ids:
-        return []
-    
-    students_query = await db.execute(
-        select(Student, User)
-        .join(User, Student.user_id == User.id)
-        .where(Student.id.in_(student_ids))
-    )
-    students_data = students_query.all()
-    if not students_data:
-        return []
-
-    ach_result = await db.execute(
-        select(Achievement).where(Achievement.student_id.in_(student_ids))
-    )
-    achievements = ach_result.scalars().all()
-
-    pages_by_student: dict[int, float] = {s[0].id: 0.0 for s in students_data}
-    for ach in achievements:
-        pages_by_student[ach.student_id] = pages_by_student.get(ach.student_id, 0.0) + calculate_achievement_pages(
-            ach.from_surah, ach.from_verse, ach.to_surah, ach.to_verse
-        )
-
-    sorted_students = sorted(
-        students_data,
-        key=lambda pair: pages_by_student.get(pair[0].id, 0.0),
-        reverse=True
-    )
-    top_students = sorted_students[:limit]
-    
-    return [
-        {
-            "student": f"{user.firstname} {user.lastname}",
-            "pages": int(round(pages_by_student.get(student.id, 0.0))),
-            "rank": idx + 1
-        }
-        for idx, (student, user) in enumerate(top_students)
-    ]
-
-
-@teacherRouter.get("/statistics/lecture-distribution", response_model=list[LectureDistributionResponse])
-async def get_teacher_lecture_distribution(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_teacher)
-):
-    """Get student distribution across THIS teacher's lectures only."""
-    teacher, teacher_lecture_ids = await get_current_teacher_and_lecture_ids(db, current_user)
-    if not teacher_lecture_ids:
-        return []
-    
-    total_students_result = await db.execute(
-        select(func.count(func.distinct(SessionParticipation.student_id)))
-        .where(SessionParticipation.lecture_id.in_(teacher_lecture_ids))
-    )
-    total_students = total_students_result.scalar() or 0
-    if total_students == 0:
-        return []
-    
-    result = await db.execute(
-        select(
-            Lecture.lecture_name_ar,
-            func.count(func.distinct(SessionParticipation.student_id)).label('student_count')
-        )
-        .select_from(Lecture)
-        .outerjoin(SessionParticipation, SessionParticipation.lecture_id == Lecture.id)
-        .where(Lecture.id.in_(teacher_lecture_ids))
-        .group_by(Lecture.id, Lecture.lecture_name_ar)
-        .order_by(func.count(func.distinct(SessionParticipation.student_id)).desc())
-    )
-    lectures_data = result.all()
-    
-    return [
-        {
-            "className": lecture_name,
-            "students": count,
-            "percentage": f"{round(count / total_students * 100, 1)}%"
-        }
-        for lecture_name, count in lectures_data
-    ]
-
-
-@teacherRouter.get("/statistics/achievement-breakdown")
-async def get_teacher_achievement_breakdown(
-    lecture_id: Optional[int] = None,
-    student_id: Optional[int] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_teacher)
-):
-    """
-    Get achievement breakdown (normal/حفظ, small/مراجعة صغرى, big/مراجعة كبرى)
-    scoped to teacher's assigned lectures and students.
-    """
-    teacher, lecture_ids = await get_current_teacher_and_lecture_ids(db, current_user)
-    if not lecture_ids:
-        return {"normal": 0.0, "small": 0.0, "big": 0.0}
-    
-    target_lecture_ids = [lecture_id] if lecture_id else lecture_ids
-    if lecture_id and lecture_id not in lecture_ids:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Lecture not assigned to you")
-    
-    students_query = await db.execute(
-        select(func.distinct(SessionParticipation.student_id))
-        .where(SessionParticipation.lecture_id.in_(target_lecture_ids))
-    )
-    allowed_student_ids = [r[0] for r in students_query.all()]
-    if not allowed_student_ids:
-        return {"normal": 0.0, "small": 0.0, "big": 0.0}
-    
-    if student_id:
-        if student_id not in allowed_student_ids:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Student not in your lectures")
-        target_student_ids = [student_id]
-    else:
-        target_student_ids = allowed_student_ids
-        
-    query = select(Achievement).where(Achievement.student_id.in_(target_student_ids))
-    
-    start_d = parse_date_safe(start_date)
-    end_d = parse_date_safe(end_date)
-    if start_d:
-        query = query.where(func.to_date(Achievement.date, 'DD-MM-YYYY') >= start_d)
-    if end_d:
-        query = query.where(func.to_date(Achievement.date, 'DD-MM-YYYY') <= end_d)
-        
-    result = await db.execute(query)
-    achievements = result.scalars().all()
-    
-    breakdown = {"normal": 0.0, "small": 0.0, "big": 0.0}
-    for ach in achievements:
-        type_key = str(ach.achievement_type.value if hasattr(ach.achievement_type, "value") else ach.achievement_type).lower()
-        if type_key in breakdown:
-            pages = calculate_achievement_pages(ach.from_surah, ach.from_verse, ach.to_surah, ach.to_verse)
-            breakdown[type_key] += pages
-            
-    return {k: round(v, 1) for k, v in breakdown.items()}
-
-
-@teacherRouter.get("/statistics/attendance-breakdown")
-async def get_teacher_attendance_breakdown(
-    lecture_id: Optional[int] = None,
-    student_id: Optional[int] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_teacher)
-):
-    """
-    Get attendance breakdown (present, late, absent, excused)
-    scoped to teacher's assigned lectures and students.
-    """
-    teacher, lecture_ids = await get_current_teacher_and_lecture_ids(db, current_user)
-    if not lecture_ids:
-        return {"present": 0, "late": 0, "absent": 0, "excused": 0, "total": 0}
-        
-    target_lecture_ids = [lecture_id] if lecture_id else lecture_ids
-    if lecture_id and lecture_id not in lecture_ids:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Lecture not assigned to you")
-        
-    students_query = await db.execute(
-        select(func.distinct(SessionParticipation.student_id))
-        .where(SessionParticipation.lecture_id.in_(target_lecture_ids))
-    )
-    allowed_student_ids = [r[0] for r in students_query.all()]
-    if not allowed_student_ids:
-        return {"present": 0, "late": 0, "absent": 0, "excused": 0, "total": 0}
-        
-    if student_id:
-        if student_id not in allowed_student_ids:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Student not in your lectures")
-        target_student_ids = [student_id]
-    else:
-        target_student_ids = allowed_student_ids
-        
-    query = select(Attendance).where(Attendance.student_id.in_(target_student_ids))
-    
-    start_d = parse_date_safe(start_date)
-    end_d = parse_date_safe(end_date)
-    if start_d:
-        query = query.where(func.to_date(Attendance.date, 'DD-MM-YYYY') >= start_d)
-    if end_d:
-        query = query.where(func.to_date(Attendance.date, 'DD-MM-YYYY') <= end_d)
-        
-    result = await db.execute(query)
-    attendances = result.scalars().all()
-    
-    counts = {"present": 0, "late": 0, "absent": 0, "excused": 0}
-    for att in attendances:
-        status_key = str(att.status.value if hasattr(att.status, "value") else att.status).lower()
-        if status_key in counts:
-            counts[status_key] += 1
-            
-    counts["total"] = sum(counts.values())
-    return counts
-
-
-@teacherRouter.get("/statistics/halqa-breakdown")
-async def get_teacher_halqa_breakdown(
-    lecture_id: int,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_teacher)
-):
-    """
-    Get memorization pages per student in a specific lecture of this teacher.
-    """
-    teacher, lecture_ids = await get_current_teacher_and_lecture_ids(db, current_user)
-    if lecture_id not in lecture_ids:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Lecture not assigned to you")
-        
-    students_query = await db.execute(
-        select(Student, User)
-        .join(User, Student.user_id == User.id)
-        .join(SessionParticipation, Student.id == SessionParticipation.student_id)
-        .where(SessionParticipation.lecture_id == lecture_id)
-        .distinct()
-    )
-    students = students_query.all()
-    if not students:
-        return []
-        
-    student_ids = [s[0].id for s in students]
-    query = select(Achievement).where(Achievement.student_id.in_(student_ids))
-    start_d = parse_date_safe(start_date)
-    end_d = parse_date_safe(end_date)
-    if start_d:
-        query = query.where(func.to_date(Achievement.date, 'DD-MM-YYYY') >= start_d)
-    if end_d:
-        query = query.where(func.to_date(Achievement.date, 'DD-MM-YYYY') <= end_d)
-        
-    ach_result = await db.execute(query)
-    achievements = ach_result.scalars().all()
-    
-    pages_by_student = {s[0].id: 0.0 for s in students}
-    for ach in achievements:
-        pages = calculate_achievement_pages(ach.from_surah, ach.from_verse, ach.to_surah, ach.to_verse)
-        pages_by_student[ach.student_id] = pages_by_student.get(ach.student_id, 0.0) + pages
-        
-    return [
-        {
-            "student": f"{user.firstname} {user.lastname}",
-            "pages": round(pages_by_student.get(student.id, 0.0), 1)
-        }
-        for student, user in students
-    ]
-
-
-@teacherRouter.get("/statistics/progress-timeline")
-async def get_teacher_progress_timeline(
-    student_id: int,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_teacher)
-):
-    """
-    Get timeline of achievements for a student in this teacher's lectures.
-    """
-    teacher, lecture_ids = await get_current_teacher_and_lecture_ids(db, current_user)
-    check_query = await db.execute(
-        select(SessionParticipation.student_id)
-        .where(
-            SessionParticipation.lecture_id.in_(lecture_ids),
-            SessionParticipation.student_id == student_id
-        )
-    )
-    if not check_query.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Student not in your lectures")
-        
-    query = select(Achievement).where(Achievement.student_id == student_id)
-    start_d = parse_date_safe(start_date)
-    end_d = parse_date_safe(end_date)
-    if start_d:
-        query = query.where(func.to_date(Achievement.date, 'DD-MM-YYYY') >= start_d)
-    if end_d:
-        query = query.where(func.to_date(Achievement.date, 'DD-MM-YYYY') <= end_d)
-        
-    ach_result = await db.execute(query.order_by(Achievement.created_at.asc()))
-    achievements = ach_result.scalars().all()
-    
-    from collections import OrderedDict
-    by_date = OrderedDict()
-    for ach in achievements:
-        d = ach.date or (ach.created_at.strftime("%d-%m-%Y") if ach.created_at else "01-01-2026")
-        short_date = "/".join(d.split("-")[:2]) if "-" in d else d
-        if short_date not in by_date:
-            by_date[short_date] = {"date": short_date, "memorization": 0.0, "minorRev": 0.0, "majorRev": 0.0}
-        
-        pages = calculate_achievement_pages(ach.from_surah, ach.from_verse, ach.to_surah, ach.to_verse)
-        type_key = str(ach.achievement_type.value if hasattr(ach.achievement_type, "value") else ach.achievement_type).lower()
-        if type_key == "normal":
-            by_date[short_date]["memorization"] += pages
-        elif type_key == "small":
-            by_date[short_date]["minorRev"] += pages
-        elif type_key == "big":
-            by_date[short_date]["majorRev"] += pages
-            
-    return list(by_date.values())
-
-
 # ==================== ADMIN TEACHER MANAGEMENT ====================
 # These routes require president/supervisor privileges
 
 @teacherRouter.post("/", response_model=TeacherResponse, status_code=status.HTTP_201_CREATED)
 async def create_teacher(
     teacher_data: TeacherCreate,
-    school_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Create a new teacher. Only presidents and supervisors can create teachers."""
     logger.debug(f"teacher data :  {teacher_data} \n current user: {current_user}")
 
-    # Get president ID (works for both presidents, supervisors, and admins)
+    # Get president ID (works for both presidents and supervisors)
     president_id = await get_president_id_for_user(current_user, db, school_id)
 
     # Check if email already exists
@@ -931,7 +441,7 @@ async def create_teacher(
         user_id=new_user.id,
         president_id=president_id,
         riwaya=teacher_data.riwaya,
-        created_by_id=get_created_by_user_id(current_user)
+        created_by_id=await get_creator_user_id(current_user, president_id, db)
     )
 
     db.add(new_teacher)
@@ -957,13 +467,13 @@ async def create_teacher(
 async def list_teachers(
     skip: int = 0,
     limit: int = 100,
-    school_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Get all teachers. Only presidents and supervisors can view all teachers."""
 
-    # Get president ID for filtering (works for both presidents, supervisors, and admins)
+    # Get president ID for filtering (works for both presidents and supervisors)
     president_id = await get_president_id_for_user(current_user, db, school_id)
 
     result = await db.execute(
@@ -1001,13 +511,13 @@ async def list_teachers(
 @teacherRouter.get("/{teacher_id}", response_model=TeacherResponse)
 async def get_teacher(
     teacher_id: int,
-    school_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Get a specific teacher by ID."""
 
-    # Get president ID for filtering (works for both presidents, supervisors, and admins)
+    # Get president ID for filtering (works for both presidents and supervisors)
     president_id = await get_president_id_for_user(current_user, db, school_id)
 
     result = await db.execute(
@@ -1040,14 +550,16 @@ async def update_teacher(
     teacher_id: int,
     teacher_data: TeacherUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Update teacher information. Only presidents and supervisors can update teachers."""
 
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     result = await db.execute(
         select(Teacher)
         .options(selectinload(Teacher.user))
-        .where(Teacher.id == teacher_id)
+        .where(Teacher.id == teacher_id, Teacher.president_id == president_id)
     )
     teacher = result.scalar_one_or_none()
     
@@ -1075,12 +587,6 @@ async def update_teacher(
                 detail="Email already registered"
             )
         teacher.user.email = update_data["email"]
-    
-    # Handle password reset if provided
-    if "password" in update_data and update_data["password"]:
-        from app.core.security import get_password_hash
-        teacher.user.hashed_password = get_password_hash(update_data["password"])
-        logger.info(f"Password reset for teacher {teacher_id} by user {current_user.id}")
 
     # Update teacher-specific fields
     if "riwaya" in update_data:
@@ -1108,14 +614,14 @@ async def update_teacher(
 async def delete_teacher(
     teacher_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
-    """Delete a teacher and their associated user account. Only presidents and supervisors can delete teachers."""
+    """Delete a teacher. Only presidents and supervisors can delete teachers."""
 
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     result = await db.execute(
-        select(Teacher)
-        .options(selectinload(Teacher.user))
-        .where(Teacher.id == teacher_id)
+        select(Teacher).where(Teacher.id == teacher_id, Teacher.president_id == president_id)
     )
     teacher = result.scalar_one_or_none()
     
@@ -1125,16 +631,11 @@ async def delete_teacher(
             detail=f"Teacher with ID {teacher_id} not found"
         )
 
-    # Store user for deletion
-    user_to_delete = teacher.user
-    
-    # Delete the teacher first
+    # Delete the teacher (will cascade to user due to relationship)
     await db.delete(teacher)
-    # Then delete the user to free up the email
-    await db.delete(user_to_delete)
     await db.commit()
     
-    logger.info(f"Teacher {teacher_id} and user {user_to_delete.id} deleted by user {current_user.id}")
+    logger.info(f"Teacher {teacher_id} deleted by user {current_user.id}")
 
     return None
 
@@ -1154,13 +655,13 @@ from app.schemas.teacher_attendance import (
 async def create_teacher_attendance(
     teacher_id: int,
     attendance_data: TeacherAttendanceCreate,
-    school_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Create or update attendance record for a teacher on a specific date."""
 
-    # Get president ID for filtering (works for both presidents, supervisors, and admins)
+    # Get president ID for filtering (works for both presidents and supervisors)
     president_id = await get_president_id_for_user(current_user, db, school_id)
 
     # Verify teacher exists and belongs to this president
@@ -1218,13 +719,13 @@ async def get_teacher_attendance(
     date: str = None,
     skip: int = 0,
     limit: int = 100,
-    school_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Get attendance records for a specific teacher. Optionally filter by date."""
 
-    # Get president ID for filtering (works for both presidents, supervisors, and admins)
+    # Get president ID for filtering (works for both presidents and supervisors)
     president_id = await get_president_id_for_user(current_user, db, school_id)
 
     # Verify teacher exists and belongs to this president
@@ -1274,13 +775,13 @@ async def update_teacher_attendance(
     teacher_id: int,
     attendance_id: int,
     attendance_data: TeacherAttendanceUpdate,
-    school_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Update a teacher attendance record."""
 
-    # Get president ID for filtering (works for both presidents, supervisors, and admins)
+    # Get president ID for filtering (works for both presidents and supervisors)
     president_id = await get_president_id_for_user(current_user, db, school_id)
 
     result = await db.execute(
@@ -1315,13 +816,13 @@ async def update_teacher_attendance(
 async def delete_teacher_attendance(
     teacher_id: int,
     attendance_id: int,
-    school_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Delete a teacher attendance record."""
 
-    # Get president ID for filtering (works for both presidents, supervisors, and admins)
+    # Get president ID for filtering (works for both presidents and supervisors)
     president_id = await get_president_id_for_user(current_user, db, school_id)
 
     result = await db.execute(
@@ -1392,11 +893,12 @@ async def create_student_attendance_as_teacher(
         .join(Lecture.teachers)
         .where(
             Student.id == student_id,
+            SessionParticipation.lecture_id == attendance_data.lecture_id,
             Teacher.id == teacher.id,
             Student.president_id == president_id
         )
     )
-    student = student_result.scalar_one_or_none()
+    student = student_result.scalars().first()
     
     if not student:
         raise HTTPException(
@@ -1404,13 +906,18 @@ async def create_student_attendance_as_teacher(
             detail=f"Student with ID {student_id} not found in your lectures"
         )
     
-    # Ensure attendance data belongs to the correct student
-    attendance_data.student_id = student_id
+    # Validate attendance data belongs to the correct student
+    if attendance_data.student_id != student_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Student ID in URL must match student_id in request body"
+        )
     
     # Check if attendance already exists for this student and date
     existing_result = await db.execute(
         select(Attendance).where(
             Attendance.student_id == student_id,
+            Attendance.lecture_id == attendance_data.lecture_id,
             Attendance.date == attendance_data.date,
             Attendance.president_id == president_id
         )
@@ -1429,6 +936,7 @@ async def create_student_attendance_as_teacher(
     # Create new attendance record with president_id
     new_attendance = Attendance(
         student_id=student_id,
+        lecture_id=attendance_data.lecture_id,
         president_id=president_id,
         date=attendance_data.date,
         status=attendance_data.status,
@@ -1447,7 +955,8 @@ async def create_student_attendance_as_teacher(
 @teacherRouter.get("/my-students/{student_id}/attendance", response_model=AttendanceList)
 async def get_student_attendance_as_teacher(
     student_id: int,
-    date: str = None,
+    lecture_id: int,
+    date: date | None = None,
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
@@ -1472,7 +981,7 @@ async def get_student_attendance_as_teacher(
     
     president_id = teacher.president_id
     
-    # Verify student exists and is in one of the teacher's lectures
+    # Verify student exists and is in the requested teacher-owned lecture.
     student_result = await db.execute(
         select(Student)
         .join(SessionParticipation, Student.id == SessionParticipation.student_id)
@@ -1480,11 +989,12 @@ async def get_student_attendance_as_teacher(
         .join(Lecture.teachers)
         .where(
             Student.id == student_id,
+            SessionParticipation.lecture_id == lecture_id,
             Teacher.id == teacher.id,
             Student.president_id == president_id
         )
     )
-    student = student_result.scalar_one_or_none()
+    student = student_result.scalars().first()
     
     if not student:
         raise HTTPException(
@@ -1495,7 +1005,8 @@ async def get_student_attendance_as_teacher(
     # Build query with president_id filter
     query = select(Attendance).where(
         Attendance.student_id == student_id,
-        Attendance.president_id == president_id
+        Attendance.president_id == president_id,
+        Attendance.lecture_id == lecture_id,
     )
     
     # Filter by date if provided
@@ -1511,7 +1022,8 @@ async def get_student_attendance_as_teacher(
     # Get total count with president_id filter
     count_query = select(Attendance).where(
         Attendance.student_id == student_id,
-        Attendance.president_id == president_id
+        Attendance.president_id == president_id,
+        Attendance.lecture_id == lecture_id,
     )
     if date:
         count_query = count_query.where(Attendance.date == date)
@@ -1549,40 +1061,28 @@ async def update_student_attendance_as_teacher(
     
     president_id = teacher.president_id
     
-    # Verify student exists and is in one of the teacher's lectures
+    # Resolve the attendance record only when its lecture is assigned to this teacher.
     student_result = await db.execute(
-        select(Student)
+        select(Attendance)
+        .join(Student, Attendance.student_id == Student.id)
         .join(SessionParticipation, Student.id == SessionParticipation.student_id)
         .join(Lecture, SessionParticipation.lecture_id == Lecture.id)
         .join(Lecture.teachers)
         .where(
             Student.id == student_id,
+            Attendance.id == attendance_id,
+            Attendance.student_id == Student.id,
+            Attendance.lecture_id == Lecture.id,
+            Attendance.president_id == president_id,
             Teacher.id == teacher.id,
             Student.president_id == president_id
         )
     )
-    student = student_result.scalar_one_or_none()
-    
-    if not student:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Student with ID {student_id} not found in your lectures"
-        )
-    
-    # Get the attendance record with president_id filter
-    result = await db.execute(
-        select(Attendance).where(
-            Attendance.id == attendance_id,
-            Attendance.student_id == student_id,
-            Attendance.president_id == president_id
-        )
-    )
-    attendance = result.scalar_one_or_none()
-    
+    attendance = student_result.scalars().first()
     if not attendance:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Attendance with ID {attendance_id} not found for student {student_id}"
+            detail=f"Attendance with ID {attendance_id} not found in your lectures"
         )
     
     # Update fields
@@ -1624,35 +1124,23 @@ async def delete_student_attendance_as_teacher(
     
     president_id = teacher.president_id
     
-    # Verify student exists and is in one of the teacher's lectures
-    student_result = await db.execute(
-        select(Student)
-        .join(SessionParticipation, Student.id == SessionParticipation.student_id)
+    result = await db.execute(
+        select(Attendance)
+        .join(Student, Attendance.student_id == Student.id)
+        .join(SessionParticipation, SessionParticipation.student_id == Student.id)
         .join(Lecture, SessionParticipation.lecture_id == Lecture.id)
         .join(Lecture.teachers)
         .where(
             Student.id == student_id,
+            Attendance.id == attendance_id,
+            Attendance.student_id == Student.id,
+            Attendance.lecture_id == Lecture.id,
+            Attendance.president_id == president_id,
             Teacher.id == teacher.id,
             Student.president_id == president_id
         )
     )
-    student = student_result.scalar_one_or_none()
-    
-    if not student:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Student with ID {student_id} not found in your lectures"
-        )
-    
-    # Get the attendance record with president_id filter
-    result = await db.execute(
-        select(Attendance).where(
-            Attendance.id == attendance_id,
-            Attendance.student_id == student_id,
-            Attendance.president_id == president_id
-        )
-    )
-    attendance = result.scalar_one_or_none()
+    attendance = result.scalars().first()
     
     if not attendance:
         raise HTTPException(
@@ -1725,8 +1213,12 @@ async def add_student_achievement_as_teacher(
             detail=f"Student with ID {student_id} not found in your lectures"
         )
     
-    # Ensure achievement data belongs to the correct student
-    achievement_data.student_id = student_id
+    # Validate achievement data belongs to the correct student
+    if achievement_data.student_id != student_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Student ID in URL must match student_id in request body"
+        )
     
     # Create achievement record with president_id
     new_achievement = Achievement(

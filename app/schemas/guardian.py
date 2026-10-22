@@ -31,14 +31,28 @@ class GuardianCreate(BaseModel):
     """Schema for creating a guardian"""
     guardian_info: GuardianInfo
     account_info: AccountInfo
-    student_id: Optional[int] = None
+    student_ids: list[int] = Field(default_factory=list)
+    student_id: Optional[int] = None  # Backwards-compatible single-child input.
 
 
 class GuardianUpdate(BaseModel):
     """Schema for updating a guardian"""
     guardian_info: GuardianInfo
     account_info: AccountInfoUpdate
-    student_id: Optional[int] = None
+    student_ids: list[int] = Field(default_factory=list)
+    student_id: Optional[int] = None  # Backwards-compatible single-child input.
+
+
+class GuardianStudentSummary(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+    username: Optional[str] = None
+
+
+class GuardianStudentOptions(BaseModel):
+    students: list[GuardianStudentSummary]
+    total: int
 
 
 class GuardianResponse(BaseModel):
@@ -54,8 +68,9 @@ class GuardianResponse(BaseModel):
     job: Optional[str] = None
     address: Optional[str] = None
     username: Optional[str] = None
-    student_id: Optional[int] = None
-    student: Optional[dict] = None  # Will contain student info if available
+    student_id: Optional[int] = None  # Deprecated: first linked student ID.
+    student_ids: list[int] = Field(default_factory=list)
+    students: list[GuardianStudentSummary] = Field(default_factory=list)
     is_active: bool = True
     
     class Config:

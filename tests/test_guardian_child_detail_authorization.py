@@ -18,6 +18,7 @@ from app.models.guardian import Guardian
 from app.models.student import Student
 from app.models.president import President
 from app.core.security import get_password_hash, create_access_token
+from app.api.v1.routes.guardian import verify_guardian_student_access
 from app.db.base import Base
 
 TEST_DATABASE_URL = os.getenv(
@@ -60,6 +61,15 @@ async def test_guardian_authorization_boundary():
                                    enrollment_date=datetime.now(timezone.utc), created_by_id=president_user.id)
             db_session.add(linked_student)
             await db_session.flush()
+
+            sibling_user = User(firstname="S", lastname="S", email="s@t.com",
+                              hashed_password=get_password_hash("p"), role=UserRoleEnum.STUDENT, is_active=True)
+            db_session.add(sibling_user)
+            await db_session.flush()
+            sibling_student = Student(user_id=sibling_user.id, president_id=president.id,
+                                    enrollment_date=datetime.now(timezone.utc), created_by_id=president_user.id)
+            db_session.add(sibling_student)
+            await db_session.flush()
             
             unlinked_user = User(firstname="U", lastname="S", email="u@t.com",
                                hashed_password=get_password_hash("p"), role=UserRoleEnum.STUDENT, is_active=True)
@@ -72,12 +82,16 @@ async def test_guardian_authorization_boundary():
             await db_session.flush()
             
             guardian = Guardian(user_id=guardian_user.id, president_id=president.id, first_name="G", last_name="T",
-                              relationship_to_student="F", student_id=linked_student.id,
+                              relationship_to_student="F", students=[linked_student, sibling_student],
                               created_at=datetime.now(timezone.utc), created_by_id=president_user.id)
             db_session.add(guardian)
             await db_session.commit()
+
+            assert await verify_guardian_student_access(
+                db_session, guardian_user.id, linked_student.id, president.id
+            ) is True
             
-            linked_id, unlinked_id = linked_student.id, unlinked_student.id
+            linked_id, sibling_id, unlinked_id = linked_student.id, sibling_student.id, unlinked_student.id
         
         token = create_access_token({"sub": "g@t.com", "user_id": guardian_user.id, "role": "GUARDIAN"})
         
@@ -92,11 +106,14 @@ async def test_guardian_authorization_boundary():
             async with AsyncClient(app=app, base_url="http://test") as client:
                 linked_resp = await client.get(f"/api/v1/guardians/my-children/{linked_id}", cookies={"access_token": token})
                 unlinked_resp = await client.get(f"/api/v1/guardians/my-children/{unlinked_id}", cookies={"access_token": token})
+                children_resp = await client.get("/api/v1/guardians/my-children", cookies={"access_token": token})
         finally:
             app.dependency_overrides.clear()
         
         assert linked_resp.status_code == 200 and linked_resp.json()["id"] == linked_id
         assert unlinked_resp.status_code == 403
+        assert children_resp.status_code == 200
+        assert {student["id"] for student in children_resp.json()["students"]} == {linked_id, sibling_id}
     
     finally:
         async with engine.begin() as conn:

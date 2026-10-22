@@ -62,7 +62,7 @@ async def test_child_detail_response_completeness():
             await db_session.flush()
             
             guardian = Guardian(user_id=g_user.id, president_id=president.id, first_name="G", last_name="C",
-                              relationship_to_student="F", student_id=student.id, created_at=datetime.now(timezone.utc),
+                              relationship_to_student="F", students=[student], created_at=datetime.now(timezone.utc),
                               created_by_id=p_user.id)
             db_session.add(guardian)
             await db_session.commit()

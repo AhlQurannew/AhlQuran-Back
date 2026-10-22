@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from datetime import datetime
+from datetime import date as DateType, datetime
 from typing import Optional
 from enum import Enum
 
@@ -15,13 +15,14 @@ class AttendanceStatus(str, Enum):
 
 
 class AttendanceBase(BaseModel):
-    date: str = Field(..., pattern=r'^\d{2}-\d{2}-\d{4}$', example="17-12-2024")  # DD-MM-YYYY
+    date: DateType = Field(..., example="2026-10-15")
     status: AttendanceStatus = Field(default=AttendanceStatus.PRESENT, example="present")
     notes: Optional[str] = Field(None, example="Good attendance")
 
 
 class AttendanceCreate(AttendanceBase):
     student_id: Optional[int] = Field(None, example=1)
+    lecture_id: int = Field(..., gt=0)
 
 
 class AttendanceUpdate(BaseModel):
@@ -32,6 +33,7 @@ class AttendanceUpdate(BaseModel):
 class AttendanceResponse(AttendanceBase):
     id: int
     student_id: int
+    lecture_id: Optional[int] = None
     created_at: datetime
     updated_at: Optional[datetime]
 
@@ -42,3 +44,14 @@ class AttendanceResponse(AttendanceBase):
 class AttendanceList(BaseModel):
     attendances: list[AttendanceResponse]
     total: int
+
+
+class AttendanceBulkRecord(BaseModel):
+    student_id: int = Field(..., gt=0)
+    status: Optional[AttendanceStatus] = None
+    notes: Optional[str] = None
+
+
+class AttendanceBulkSave(BaseModel):
+    date: DateType
+    records: list[AttendanceBulkRecord]

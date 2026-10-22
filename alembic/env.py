@@ -7,7 +7,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.core.config import settings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class MigrationSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
+
+    DATABASE_URL: str
+
+
 from app.db.base import Base  # Import your Base with all models
 
 # Import all models so Alembic can detect them
@@ -16,20 +24,21 @@ from app.models import (
     Session, SessionParticipation, ParticipationStatus,
     Achievement, Lecture, WeeklySchedule, Message
 )
+from app.models.account_preference import AccountPreference
 from app.models.attendance import Attendance
 from app.models.teacher_attendance import TeacherAttendance
 
 config = context.config
 
 # Convert async database URL to sync for Alembic
-database_url = settings.DATABASE_URL
+database_url = MigrationSettings().DATABASE_URL
 if database_url.startswith("postgresql+asyncpg://"):
     database_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
 elif database_url.startswith("postgresql://"):
     # Already sync, no change needed
     pass
 
-config.set_main_option("sqlalchemy.url", database_url)
+config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

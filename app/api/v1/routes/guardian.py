@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
+from sqlalchemy import or_
 from app.db.session import get_db
 from app.models.user import User, UserRoleEnum
 from app.models.guardian import Guardian
@@ -10,7 +11,10 @@ from app.models.sessionParticipation import SessionParticipation
 from app.models.acheivements import Achievement
 from app.models.attendance import Attendance
 from app.schemas.student import StudentResponse, StudentList
-from app.schemas.guardian import GuardianResponse, GuardianCreate, GuardianUpdate, GuardianList
+from app.schemas.guardian import (
+    GuardianResponse, GuardianCreate, GuardianUpdate, GuardianList,
+    GuardianStudentOptions,
+)
 from app.schemas.guardian_student_data import (
     PaginatedAchievementsResponse,
     GuardianAchievementResponse,
@@ -18,11 +22,11 @@ from app.schemas.guardian_student_data import (
     GuardianAttendanceResponse,
     StudentContext
 )
-from app.core.dependencies import require_guardian, require_president_or_supervisor
+from app.core.dependencies import require_guardian, require_school_management_access
 from app.core.security import get_password_hash
-from app.core.multi_tenancy import get_president_id_for_user, get_created_by_user_id
+from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 from typing import Tuple, List, Optional
-from datetime import datetime
+from datetime import date, datetime
 from fastapi import Query
 import logging
 import math
@@ -30,6 +34,67 @@ import math
 logger = logging.getLogger(__name__)
 
 guardianRouter = APIRouter()
+
+
+def _guardian_student_ids(data: GuardianCreate | GuardianUpdate) -> list[int]:
+    ids = data.student_ids or ([data.student_id] if data.student_id is not None else [])
+    if len(ids) != len(set(ids)):
+        raise HTTPException(status_code=422, detail="Student IDs must be unique")
+    return ids
+
+
+async def _get_linkable_students(
+    db: AsyncSession,
+    student_ids: list[int],
+    president_id: int,
+    guardian_id: int | None = None,
+) -> list[Student]:
+    if not student_ids:
+        return []
+
+    result = await db.execute(
+        select(Student)
+        .where(
+            Student.id.in_(student_ids),
+            Student.president_id == president_id,
+            or_(Student.guardian_id.is_(None), Student.guardian_id == guardian_id)
+            if guardian_id is not None else Student.guardian_id.is_(None),
+        )
+        .order_by(Student.id)
+        .with_for_update()
+    )
+    students = result.scalars().all()
+    if len(students) != len(student_ids):
+        raise HTTPException(
+            status_code=409,
+            detail="One or more selected students are unavailable, outside your organization, or linked to another guardian",
+        )
+    return students
+
+
+def _guardian_response(guardian: Guardian) -> GuardianResponse:
+    students = sorted(guardian.students, key=lambda student: (student.user.firstname.casefold(), student.user.lastname.casefold()))
+    return GuardianResponse(
+        id=guardian.id,
+        user_id=guardian.user_id,
+        first_name=guardian.first_name,
+        last_name=guardian.last_name,
+        email=guardian.email,
+        phone_number=guardian.phone_number,
+        date_of_birth=guardian.date_of_birth,
+        relationship_to_student=guardian.relationship_to_student,
+        address=guardian.address,
+        job=guardian.job,
+        username=guardian.user.email if guardian.user else None,
+        student_id=students[0].id if students else None,
+        student_ids=[student.id for student in students],
+        students=[
+            {"id": student.id, "first_name": student.user.firstname, "last_name": student.user.lastname,
+             "username": student.user.email}
+            for student in students
+        ],
+        is_active=guardian.user.is_active if guardian.user else False,
+    )
 
 
 # ==================== AUTHORIZATION HELPERS ====================
@@ -45,7 +110,7 @@ async def verify_guardian_student_access(
     Verify that a guardian has access to a student's data.
     
     This function checks:
-    1. Guardian is linked to the student via Guardian.student_id
+    1. Student.guardian_id points to the guardian record
     2. Both guardian and student belong to the same president_id (multi-tenancy)
     
     Args:
@@ -76,10 +141,17 @@ async def verify_guardian_student_access(
         )
     
     # Verify guardian-student link exists
+    guardian_result = await db.execute(
+        select(Guardian).where(Guardian.user_id == guardian_user_id)
+    )
+    guardian = guardian_result.scalar_one_or_none()
+    if guardian is None:
+        return False
     guardian_link_result = await db.execute(
-        select(Guardian)
-        .where(Guardian.user_id == guardian_user_id)
-        .where(Guardian.student_id == student_id)
+        select(Student.id).where(
+            Student.id == student_id,
+            Student.guardian_id == guardian.id,
+        )
     )
     guardian_link = guardian_link_result.scalar_one_or_none()
     
@@ -94,9 +166,9 @@ async def verify_guardian_student_access(
         )
     
     # Verify multi-tenancy: both guardian and student must have matching president_id
-    if student.president_id != president_id or guardian_link.president_id != president_id:
+    if student.president_id != president_id or guardian.president_id != president_id:
         logger.warning(
-            f"Authorization failed: Guardian user {guardian_user_id} (president {guardian_link.president_id}) "
+            f"Authorization failed: Guardian user {guardian_user_id} (president {guardian.president_id}) "
             f"attempted to access student {student_id} (president {student.president_id})"
         )
         raise HTTPException(
@@ -198,8 +270,8 @@ async def get_attendance_for_student(
     db: AsyncSession,
     student_id: int,
     president_id: int,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
     skip: int = 0,
     limit: int = 50
 ) -> Tuple[List[Attendance], int]:
@@ -210,8 +282,8 @@ async def get_attendance_for_student(
         db: Database session
         student_id: The student's ID
         president_id: The president_id for multi-tenancy filtering
-        start_date: Optional start date filter (DD-MM-YYYY format)
-        end_date: Optional end date filter (DD-MM-YYYY format)
+        start_date: Optional inclusive ISO date filter
+        end_date: Optional inclusive ISO date filter
         skip: Number of records to skip (for pagination)
         limit: Maximum number of records to return
     
@@ -233,7 +305,6 @@ async def get_attendance_for_student(
         
         # Add date range filtering if provided
         if start_date:
-            # Since dates are stored as strings in DD-MM-YYYY format
             query = query.where(Attendance.date >= start_date)
         
         if end_date:
@@ -412,13 +483,10 @@ async def get_my_children(
     
     logger.info(f"Guardian {guardian.id} requesting children list")
     
-    # Query Student table filtering by guardian's student_id links
-    # A guardian can have multiple children through multiple Guardian records
-    # or through the student_id field in the Guardian table
+    # Each student references their guardian, allowing one guardian to have many children.
     query = (
         select(Student)
-        .join(Guardian, Guardian.student_id == Student.id)
-        .where(Guardian.user_id == current_user.id)
+        .where(Student.guardian_id == guardian.id)
         .where(Student.president_id == guardian.president_id)
         .options(
             selectinload(Student.user),
@@ -430,8 +498,7 @@ async def get_my_children(
     # Get total count with same filters (before pagination)
     count_query = (
         select(Student)
-        .join(Guardian, Guardian.student_id == Student.id)
-        .where(Guardian.user_id == current_user.id)
+        .where(Student.guardian_id == guardian.id)
         .where(Student.president_id == guardian.president_id)
         .distinct()
     )
@@ -505,12 +572,7 @@ async def get_my_child_detail(
     
     # Verify student is linked to guardian (check student_id matches)
     # Check if there's a Guardian record linking this user to this student
-    guardian_link_result = await db.execute(
-        select(Guardian)
-        .where(Guardian.user_id == current_user.id)
-        .where(Guardian.student_id == student_id)
-    )
-    guardian_link = guardian_link_result.scalar_one_or_none()
+    guardian_link = student.guardian_id == guardian.id
     
     # Return 403 if student not linked to guardian
     if not guardian_link:
@@ -556,7 +618,7 @@ async def get_student_achievements(
     
     Authorization checks:
     - Guardian must be authenticated
-    - Student must be linked to the guardian via Guardian.student_id
+    - Student.guardian_id must match the authenticated guardian
     - Student must belong to the same president_id as the guardian (multi-tenancy)
     
     Args:
@@ -682,8 +744,8 @@ async def get_student_achievements(
 @guardianRouter.get("/students/{student_id}/attendance", response_model=PaginatedAttendanceResponse)
 async def get_student_attendance(
     student_id: int,
-    start_date: Optional[str] = Query(None, description="Start date filter in DD-MM-YYYY format"),
-    end_date: Optional[str] = Query(None, description="End date filter in DD-MM-YYYY format"),
+    start_date: Optional[date] = Query(None, description="Inclusive ISO start date"),
+    end_date: Optional[date] = Query(None, description="Inclusive ISO end date"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=100, description="Number of items per page"),
     db: AsyncSession = Depends(get_db),
@@ -697,13 +759,13 @@ async def get_student_attendance(
     
     Authorization checks:
     - Guardian must be authenticated
-    - Student must be linked to the guardian via Guardian.student_id
+    - Student.guardian_id must match the authenticated guardian
     - Student must belong to the same president_id as the guardian (multi-tenancy)
     
     Args:
         student_id: The ID of the student to retrieve attendance for
-        start_date: Optional start date filter (DD-MM-YYYY format)
-        end_date: Optional end date filter (DD-MM-YYYY format)
+        start_date: Optional inclusive ISO date filter
+        end_date: Optional inclusive ISO date filter
         page: Page number (1-indexed, default: 1)
         page_size: Number of items per page (default: 50, max: 100)
         db: Database session
@@ -781,6 +843,7 @@ async def get_student_attendance(
                     id=attendance.id,
                     student=student_context,
                     date=attendance.date,
+                    lecture_id=attendance.lecture_id,
                     status=attendance.status.value,
                     notes=attendance.notes
                 )
@@ -824,7 +887,8 @@ async def get_student_attendance(
 async def create_guardian(
     guardian_data: GuardianCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """
     Create a new guardian for the current president's organization.
@@ -832,7 +896,7 @@ async def create_guardian(
     Only presidents and supervisors can create guardians.
     """
     # Get president ID (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     
     # Check if email already exists
     existing_user = await db.execute(
@@ -841,20 +905,9 @@ async def create_guardian(
     if existing_user.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
     
-    # Verify student exists and belongs to this president (if student_id provided)
-    if guardian_data.student_id:
-        student_result = await db.execute(
-            select(Student).where(
-                Student.id == guardian_data.student_id,
-                Student.president_id == president_id
-            )
-        )
-        student = student_result.scalar_one_or_none()
-        if not student:
-            raise HTTPException(
-                status_code=404, 
-                detail="Student not found or does not belong to your organization"
-            )
+    linked_students = await _get_linkable_students(
+        db, _guardian_student_ids(guardian_data), president_id
+    )
     
     # Create User account
     new_user = User(
@@ -880,31 +933,25 @@ async def create_guardian(
         email=guardian_data.guardian_info.email,
         job=guardian_data.guardian_info.job,
         address=guardian_data.guardian_info.address,
-        student_id=guardian_data.student_id,
-        created_by_id=get_created_by_user_id(current_user)
+        created_by_id=await get_creator_user_id(current_user, president_id, db)
     )
     db.add(new_guardian)
+    await db.flush()
+    for student in linked_students:
+        student.guardian_id = new_guardian.id
+    new_guardian.user = new_user
+    new_guardian.students = linked_students
     await db.commit()
-    await db.refresh(new_guardian)
-    await db.refresh(new_user)
+    loaded = await db.execute(
+        select(Guardian)
+        .options(selectinload(Guardian.user), selectinload(Guardian.students).selectinload(Student.user))
+        .where(Guardian.id == new_guardian.id)
+    )
+    new_guardian = loaded.scalar_one()
     
     logger.info(f"Guardian created: {new_guardian.id} by user {current_user.id}")
     
-    return GuardianResponse(
-        id=new_guardian.id,
-        user_id=new_user.id,
-        first_name=new_guardian.first_name,
-        last_name=new_guardian.last_name,
-        email=new_guardian.email,
-        phone_number=new_guardian.phone_number,
-        date_of_birth=new_guardian.date_of_birth,
-        relationship_to_student=new_guardian.relationship_to_student,
-        address=new_guardian.address,
-        job=new_guardian.job,
-        student_id=new_guardian.student_id,
-        username=new_user.email,
-        is_active=new_user.is_active
-    )
+    return _guardian_response(new_guardian)
 
 
 @guardianRouter.get("/", response_model=GuardianList)
@@ -912,7 +959,8 @@ async def list_guardians(
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """
     Get all guardians for the current president's organization.
@@ -920,7 +968,7 @@ async def list_guardians(
     Only presidents and supervisors can view all guardians.
     """
     # Get president ID (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     
     # Filter guardians by president_id with eager loading
     result = await db.execute(
@@ -928,7 +976,7 @@ async def list_guardians(
         .where(Guardian.president_id == president_id)
         .options(
             selectinload(Guardian.user),
-            selectinload(Guardian.student).selectinload(Student.user)
+            selectinload(Guardian.students).selectinload(Student.user)
         )
         .offset(skip)
         .limit(limit)
@@ -944,40 +992,71 @@ async def list_guardians(
     # Build response list
     guardians_list = []
     for guardian in guardians:
-        guardian_response = GuardianResponse(
-            id=guardian.id,
-            user_id=guardian.user_id,
-            first_name=guardian.first_name,
-            last_name=guardian.last_name,
-            email=guardian.email,
-            phone_number=guardian.phone_number,
-            date_of_birth=guardian.date_of_birth,
-            relationship_to_student=guardian.relationship_to_student,
-            address=guardian.address,
-            job=guardian.job,
-            student_id=guardian.student_id,
-            username=guardian.user.email if guardian.user else None,
-            is_active=guardian.user.is_active if guardian.user else False
-        )
-        guardians_list.append(guardian_response)
+        guardians_list.append(_guardian_response(guardian))
     
     return GuardianList(guardians=guardians_list, total=total)
+
+
+@guardianRouter.get("/available-students", response_model=GuardianStudentOptions)
+async def get_linkable_students(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    guardian_id: int | None = Query(None, gt=0),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
+):
+    president_id = await get_president_id_for_user(current_user, db, school_id)
+    if guardian_id is not None:
+        guardian_result = await db.execute(
+            select(Guardian.id).where(
+                Guardian.id == guardian_id,
+                Guardian.president_id == president_id,
+            )
+        )
+        if guardian_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Guardian not found")
+
+    eligible = or_(Student.guardian_id.is_(None), Student.guardian_id == guardian_id) if guardian_id else Student.guardian_id.is_(None)
+    rows = await db.execute(
+        select(Student, User)
+        .join(User, User.id == Student.user_id)
+        .where(Student.president_id == president_id, eligible)
+        .order_by(User.firstname, User.lastname, Student.id)
+        .offset(skip)
+        .limit(limit)
+    )
+    students = rows.all()
+    count = await db.scalar(
+        select(func.count(Student.id)).where(Student.president_id == president_id, eligible)
+    )
+    return GuardianStudentOptions(
+        students=[
+            {"id": student.id, "first_name": user.firstname, "last_name": user.lastname, "username": user.email}
+            for student, user in students
+        ],
+        total=count or 0,
+    )
 
 
 @guardianRouter.get("/{guardian_id}", response_model=GuardianResponse)
 async def get_guardian(
     guardian_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """Get a specific guardian by ID."""
     # Get president ID (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     
     result = await db.execute(
         select(Guardian)
         .where(Guardian.id == guardian_id, Guardian.president_id == president_id)
-        .options(selectinload(Guardian.user))
+        .options(
+            selectinload(Guardian.user),
+            selectinload(Guardian.students).selectinload(Student.user),
+        )
     )
     guardian = result.scalar_one_or_none()
     
@@ -987,21 +1066,7 @@ async def get_guardian(
             detail=f"Guardian with ID {guardian_id} not found"
         )
     
-    return GuardianResponse(
-        id=guardian.id,
-        user_id=guardian.user_id,
-        first_name=guardian.first_name,
-        last_name=guardian.last_name,
-        email=guardian.email,
-        phone_number=guardian.phone_number,
-        date_of_birth=guardian.date_of_birth,
-        relationship_to_student=guardian.relationship_to_student,
-        address=guardian.address,
-        job=guardian.job,
-        student_id=guardian.student_id,
-        username=guardian.user.email if guardian.user else None,
-        is_active=guardian.user.is_active if guardian.user else False
-    )
+    return _guardian_response(guardian)
 
 
 @guardianRouter.put("/{guardian_id}", response_model=GuardianResponse)
@@ -1009,7 +1074,8 @@ async def update_guardian(
     guardian_id: int,
     guardian_data: GuardianUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """
     Update an existing guardian.
@@ -1017,13 +1083,16 @@ async def update_guardian(
     Only presidents and supervisors can update guardians.
     """
     # Get president ID (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     
     # Get guardian and verify it belongs to this president
     result = await db.execute(
         select(Guardian)
         .where(Guardian.id == guardian_id, Guardian.president_id == president_id)
-        .options(selectinload(Guardian.user))
+        .options(
+            selectinload(Guardian.user),
+            selectinload(Guardian.students).selectinload(Student.user),
+        )
     )
     guardian = result.scalar_one_or_none()
     
@@ -1033,20 +1102,12 @@ async def update_guardian(
             detail="Guardian not found or does not belong to your organization"
         )
     
-    # Verify student exists and belongs to this president (if student_id provided)
-    if guardian_data.student_id:
-        student_result = await db.execute(
-            select(Student).where(
-                Student.id == guardian_data.student_id,
-                Student.president_id == president_id
-            )
-        )
-        student = student_result.scalar_one_or_none()
-        if not student:
-            raise HTTPException(
-                status_code=404,
-                detail="Student not found or does not belong to your organization"
-            )
+    linked_students = await _get_linkable_students(
+        db,
+        _guardian_student_ids(guardian_data),
+        president_id,
+        guardian_id=guardian.id,
+    )
     
     # Update guardian fields
     guardian.first_name = guardian_data.guardian_info.first_name
@@ -1057,7 +1118,7 @@ async def update_guardian(
     guardian.email = guardian_data.guardian_info.email
     guardian.job = guardian_data.guardian_info.job
     guardian.address = guardian_data.guardian_info.address
-    guardian.student_id = guardian_data.student_id
+    guardian.students = linked_students
     
     # Update user account if needed
     if guardian.user:
@@ -1072,32 +1133,22 @@ async def update_guardian(
             )
     
     await db.commit()
-    await db.refresh(guardian)
-    
     logger.info(f"Guardian {guardian_id} updated by user {current_user.id}")
-    
-    return GuardianResponse(
-        id=guardian.id,
-        user_id=guardian.user_id,
-        first_name=guardian.first_name,
-        last_name=guardian.last_name,
-        email=guardian.email,
-        phone_number=guardian.phone_number,
-        date_of_birth=guardian.date_of_birth,
-        relationship_to_student=guardian.relationship_to_student,
-        address=guardian.address,
-        job=guardian.job,
-        student_id=guardian.student_id,
-        username=guardian.user.email if guardian.user else None,
-        is_active=guardian.user.is_active if guardian.user else False
+    loaded = await db.execute(
+        select(Guardian)
+        .options(selectinload(Guardian.user), selectinload(Guardian.students).selectinload(Student.user))
+        .where(Guardian.id == guardian_id)
     )
+    guardian = loaded.scalar_one()
+    return _guardian_response(guardian)
 
 
 @guardianRouter.delete("/{guardian_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_guardian(
     guardian_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president_or_supervisor)
+    current_user=Depends(require_school_management_access),
+    school_id: int | None = None,
 ):
     """
     Delete a guardian.
@@ -1106,7 +1157,7 @@ async def delete_guardian(
     Only presidents and supervisors can delete guardians.
     """
     # Get president ID (works for both presidents and supervisors)
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
     
     # Get guardian and verify it belongs to this president
     result = await db.execute(

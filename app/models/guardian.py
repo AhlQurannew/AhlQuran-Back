@@ -31,12 +31,6 @@ class Guardian(Base):
     email: Mapped[Optional[str]] = mapped_column(String(255))
     job: Mapped[Optional[str]] = mapped_column(String(100))
     address: Mapped[Optional[str]] = mapped_column(String(255))
-    student_id: Mapped[Optional[int]] = mapped_column(
-        Integer,
-        ForeignKey("students.id", ondelete="SET NULL"),
-        nullable=True
-    )
-    
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), 
         default=lambda: datetime.now(timezone.utc)
@@ -57,10 +51,10 @@ class Guardian(Base):
         foreign_keys=[created_by_id]
     )
     
-    student: Mapped[Optional["Student"]] = relationship(
+    students: Mapped[list["Student"]] = relationship(
         "Student",
-        foreign_keys=[student_id],
-        backref="guardians"
+        back_populates="guardian",
+        foreign_keys="Student.guardian_id",
     )
     
     def __repr__(self) -> str:

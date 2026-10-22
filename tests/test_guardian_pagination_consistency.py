@@ -103,7 +103,7 @@ async def test_pagination_consistency_property(db_session):
         first_name="TestGuardian",
         last_name="Parent",
         relationship_to_student="Parent",
-        student_id=student.id,
+        students=[student],
         created_at=datetime.now(timezone.utc),
         created_by_id=president_user.id
     )
@@ -163,4 +163,3 @@ async def test_pagination_consistency_property(db_session):
     
     finally:
         app.dependency_overrides.clear()
-

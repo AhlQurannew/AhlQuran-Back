@@ -1,9 +1,8 @@
-from fastapi import APIRouter, HTTPException, Depends, Response, Query
+from fastapi import APIRouter, HTTPException, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, String, cast
 from sqlalchemy.orm import selectinload
 from datetime import datetime, date
-from typing import Optional, List
 from app.db.session import get_db
 from app.core.security import get_password_hash
 
@@ -26,37 +25,46 @@ from app.schemas.statistics import (
     StatsSummaryResponse,
     AttendanceRecordResponse,
     MemorizationRecordResponse,
-    LectureDistributionResponse
+    LectureDistributionResponse,
+    AttendanceStatisticsResponse,
 )
-from app.core.dependencies import require_president, require_president_or_admin, require_president_or_supervisor
-from app.core.multi_tenancy import get_president_id_for_user, get_created_by_user_id
-from app.core.quran_pages import calculate_achievement_pages
+from app.core.dependencies import (
+    require_president_chief_supervisor_or_admin,
+    require_school_management_access,
+)
+from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 
 
 presidentRouter = APIRouter()
 
 
-async def get_current_president_id(current_user, db: AsyncSession, school_id: Optional[int] = None) -> int:
+async def get_current_president_id(current_user, db: AsyncSession, school_id: int = None) -> int:
     """
-    Helper function to get the president ID for the current user (president, supervisor, chief supervisor) or admin viewing a school.
-    Delegates to get_president_id_for_user in app.core.multi_tenancy.
+    Helper function to get the president ID for the current user or admin viewing a school.
+
+    Args:
+        current_user: Current authenticated user (President or Admin)
+        db: Database session
+        school_id: Optional school_id when admin is viewing a specific school
+
+    Returns:
+        President ID
     """
-    return await get_president_id_for_user(current_user, db, school_id=school_id)
+    return await get_president_id_for_user(current_user, db, school_id)
 
 
 @presidentRouter.post("/register_supervisor", response_model=SupervisorResponse)
 async def add_supervisor(
         supervisor_data: SupervisorCreate,
         db: AsyncSession = Depends(get_db),
-        current_user = Depends(require_president_or_admin),  # Only presidents and admins can create supervisors
-        school_id: Optional[int] = Query(None)
+        current_user = Depends(require_president_chief_supervisor_or_admin),
+        school_id: int | None = None
 ):
     # Get president ID (handles both president and admin)
     president_id = await get_current_president_id(current_user, db, school_id)
-    
-    # Get the user_id for created_by_id
-    created_by_user_id = get_created_by_user_id(current_user)
-    
+
+    created_by_user_id = await get_creator_user_id(current_user, president_id, db)
+
     # Check if email already exists
     existing_user = await db.execute(
         select(User).where(User.email == supervisor_data.email)
@@ -101,12 +109,12 @@ async def add_supervisor(
 async def register_teacher(
     teacher_data: TeacherCreate,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_supervisor),  # Allow supervisors to create teachers
-    school_id: Optional[int] = Query(None)
+    current_user = Depends(require_school_management_access),
+    school_id: int | None = None
 ):
     # Get president ID (handles both president and admin)
     president_id = await get_current_president_id(current_user, db, school_id)
-    
+
     # Check if email already exists
     existing_user = await db.execute(
         select(User).where(User.email == teacher_data.email)
@@ -130,14 +138,14 @@ async def register_teacher(
     new_teacher = Teacher(
         user_id=new_user.id,
         riwaya=teacher_data.riwaya,
-        created_by_id=get_created_by_user_id(current_user),
+        created_by_id=await get_creator_user_id(current_user, president_id, db),
         president_id=president_id
     )
     db.add(new_teacher)
     await db.commit()
     await db.refresh(new_teacher)
     await db.refresh(new_user)
-    
+
     return {
         "id": new_teacher.id,
         "user_id": new_teacher.user_id,
@@ -153,12 +161,12 @@ async def register_teacher(
 async def register_student(
     student_data: StudentCreate,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_supervisor),  # Allow supervisors to create students
-    school_id: Optional[int] = Query(None)
+    current_user = Depends(require_school_management_access),
+    school_id: int | None = None
 ):
     # Get president ID (handles both president and admin)
     president_id = await get_current_president_id(current_user, db, school_id)
-    
+
     # Check if email already exists
     existing_user = await db.execute(
         select(User).where(User.email == student_data.email)
@@ -184,13 +192,13 @@ async def register_student(
         parent_name=student_data.parent_name,
         parent_phone=student_data.parent_phone,
         guardian_email=student_data.guardian_email,
-        created_by_id=get_created_by_user_id(current_user),
+        created_by_id=await get_creator_user_id(current_user, president_id, db),
         president_id=president_id
     )
     db.add(new_student)
     await db.commit()
     await db.refresh(new_student)
-    
+
     return {
         "message": "Student registered successfully",
         "student": new_student
@@ -199,12 +207,12 @@ async def register_student(
 @presidentRouter.get("/teachers", response_model=list[TeacherResponse])
 async def get_teachers(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_supervisor),  # Allow supervisors to view teachers
-    school_id: Optional[int] = Query(None)
+    current_user = Depends(require_school_management_access),
+    school_id: int | None = None
 ):
     # Get president ID (handles both president and admin)
     president_id = await get_current_president_id(current_user, db, school_id)
-    
+
     # Filter teachers by president_id
     result = await db.execute(
         select(Teacher, User)
@@ -212,7 +220,7 @@ async def get_teachers(
         .where(Teacher.president_id == president_id)
     )
     teachers_data = result.all()
-    
+
     return [
         {
             "id": teacher.id,
@@ -230,12 +238,12 @@ async def get_teachers(
 @presidentRouter.get("/students", response_model=list[StudentResponse])
 async def get_students(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_supervisor),  # Allow supervisors to view students
-    school_id: Optional[int] = Query(None)
+    current_user = Depends(require_school_management_access),
+    school_id: int | None = None
 ):
     # Get president ID (handles both president and admin)
     president_id = await get_current_president_id(current_user, db, school_id)
-    
+
     # Filter students by president_id
     result = await db.execute(
         select(Student).where(Student.president_id == president_id)
@@ -247,38 +255,38 @@ async def get_students(
 @presidentRouter.get("/statistics/summary", response_model=StatsSummaryResponse)
 async def get_statistics_summary(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_supervisor),
-    school_id: Optional[int] = Query(None)
+    current_user = Depends(require_school_management_access),
+    school_id: int = None
 ):
     """Get summary statistics for the president's school"""
     president_id = await get_current_president_id(current_user, db, school_id)
-    
+
     # Total students
     total_students_result = await db.execute(
         select(func.count(Student.id)).where(Student.president_id == president_id)
     )
     total_students = total_students_result.scalar() or 0
-    
+
     # Total teachers
     total_teachers_result = await db.execute(
         select(func.count(Teacher.id)).where(Teacher.president_id == president_id)
     )
     total_teachers = total_teachers_result.scalar() or 0
-    
+
     # Total supervisors
     total_supervisors_result = await db.execute(
         select(func.count(Supervisor.id)).where(Supervisor.president_id == president_id)
     )
     total_supervisors = total_supervisors_result.scalar() or 0
-    
+
     # Total lectures
     total_lectures_result = await db.execute(
         select(func.count(Lecture.id)).where(Lecture.president_id == president_id)
     )
     total_lectures = total_lectures_result.scalar() or 0
-    
+
     # Students present today - date is stored as string in DD-MM-YYYY format
-    today_str = datetime.now().strftime("%d-%m-%Y")
+    today_str = datetime.now().date()
     present_today_result = await db.execute(
         select(func.count(func.distinct(Attendance.student_id)))
         .join(Student, Attendance.student_id == Student.id)
@@ -289,25 +297,24 @@ async def get_statistics_summary(
         )
     )
     present_today = present_today_result.scalar() or 0
-    
-    # Total pages memorized (sum of achievements for president's students)
-    ach_result = await db.execute(
-        select(Achievement)
+
+    # Total pages memorized (sum of achievements)
+    total_pages_result = await db.execute(
+        select(func.sum(
+            (Achievement.to_surah * 20 + Achievement.to_verse) -
+            (Achievement.from_surah * 20 + Achievement.from_verse)
+        ))
         .join(Student, Achievement.student_id == Student.id)
         .where(Student.president_id == president_id)
     )
-    achievements = ach_result.scalars().all()
-    total_pages = sum(
-        calculate_achievement_pages(ach.from_surah, ach.from_verse, ach.to_surah, ach.to_verse)
-        for ach in achievements
-    )
-    
+    total_pages = total_pages_result.scalar() or 0
+
     return {
         "total_students": total_students,
         "total_teachers": total_teachers,
         "total_supervisors": total_supervisors,
         "present_today": present_today,
-        "total_pages_memorized": int(round(total_pages)),
+        "total_pages_memorized": max(0, int(total_pages / 15)),  # Rough estimate
         "total_lectures": total_lectures
     }
 
@@ -316,13 +323,13 @@ async def get_statistics_summary(
 async def get_attendance_trend(
     limit: int = 10,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_supervisor),
-    school_id: Optional[int] = Query(None)
+    current_user = Depends(require_school_management_access),
+    school_id: int = None
 ):
     """Get attendance trend over recent days"""
     president_id = await get_current_president_id(current_user, db, school_id)
-    
-    # Get unique dates with attendance records (date is string DD-MM-YYYY)
+
+    # Get unique calendar dates with attendance records.
     dates_result = await db.execute(
         select(Attendance.date)
         .join(Student, Attendance.student_id == Student.id)
@@ -332,7 +339,7 @@ async def get_attendance_trend(
         .limit(limit)
     )
     dates = [row[0] for row in dates_result.all()]
-    
+
     attendance_data = []
     for date_val in dates:
         # Present count
@@ -346,7 +353,7 @@ async def get_attendance_trend(
             )
         )
         present = present_result.scalar() or 0
-        
+
         # Absent count
         absent_result = await db.execute(
             select(func.count(Attendance.id))
@@ -358,10 +365,10 @@ async def get_attendance_trend(
             )
         )
         absent = absent_result.scalar() or 0
-        
+
         total = present + absent
         percentage = round((present / total * 100), 1) if total > 0 else 0
-        
+
         attendance_data.append({
             "date": date_val,
             "present": present,
@@ -369,78 +376,157 @@ async def get_attendance_trend(
             "total": total,
             "percentage": f"{percentage}%"
         })
-    
+
     return attendance_data
+
+
+@presidentRouter.get("/statistics/attendance", response_model=AttendanceStatisticsResponse)
+async def get_attendance_statistics(
+    lecture_id: int,
+    start_date: date,
+    end_date: date,
+    student_id: int | None = None,
+    school_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_school_management_access),
+):
+    if start_date > end_date:
+        raise HTTPException(status_code=422, detail="start_date must be on or before end_date")
+
+    president_id = await get_current_president_id(current_user, db, school_id)
+    lecture_result = await db.execute(
+        select(Lecture.id).where(Lecture.id == lecture_id, Lecture.president_id == president_id)
+    )
+    if lecture_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Lecture not found")
+
+    if student_id is not None:
+        enrollment_result = await db.execute(
+            select(SessionParticipation.id)
+            .join(Student, Student.id == SessionParticipation.student_id)
+            .where(
+                SessionParticipation.lecture_id == lecture_id,
+                SessionParticipation.student_id == student_id,
+                Student.president_id == president_id,
+            )
+            .limit(1)
+        )
+        if enrollment_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Student is not enrolled in this lecture")
+
+    grouped_result = await db.execute(
+        select(Attendance.date, Attendance.status, func.count(Attendance.id))
+        .join(Student, Student.id == Attendance.student_id)
+        .where(
+            Attendance.president_id == president_id,
+            Student.president_id == president_id,
+            Attendance.lecture_id == lecture_id,
+            Attendance.date >= start_date,
+            Attendance.date <= end_date,
+            *([Attendance.student_id == student_id] if student_id is not None else []),
+        )
+        .group_by(Attendance.date, Attendance.status)
+        .order_by(Attendance.date)
+    )
+
+    status_totals = {"present": 0, "late": 0, "absent": 0, "excused": 0}
+    daily_map: dict[date, dict[str, int]] = {}
+    for attendance_date, status_value, count in grouped_result.all():
+        status_key = status_value.value if hasattr(status_value, "value") else str(status_value)
+        if status_key not in status_totals:
+            continue
+        status_totals[status_key] += count
+        daily_map.setdefault(attendance_date, {"present": 0, "late": 0, "absent": 0, "excused": 0})[status_key] += count
+
+    total = sum(status_totals.values())
+    daily = []
+    for day, counts in sorted(daily_map.items()):
+        daily.append({"date": day, **counts, "total": sum(counts.values())})
+
+    legacy_result = await db.execute(
+        select(func.count(Attendance.id))
+        .join(Student, Student.id == Attendance.student_id)
+        .where(
+            Attendance.president_id == president_id,
+            Student.president_id == president_id,
+            Attendance.lecture_id.is_(None),
+            Attendance.date >= start_date,
+            Attendance.date <= end_date,
+            *([Attendance.student_id == student_id] if student_id is not None else []),
+        )
+    )
+    percentages = {
+        key: round(value * 100 / total, 1) if total else 0.0
+        for key, value in status_totals.items()
+    }
+    return {
+        "lecture_id": lecture_id,
+        "student_id": student_id,
+        "start_date": start_date,
+        "end_date": end_date,
+        **status_totals,
+        "total": total,
+        "percentages": percentages,
+        "daily": daily,
+        "unassigned_legacy_count": legacy_result.scalar() or 0,
+    }
 
 
 @presidentRouter.get("/statistics/top-memorizers", response_model=list[MemorizationRecordResponse])
 async def get_top_memorizers(
     limit: int = 5,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_supervisor),
-    school_id: Optional[int] = Query(None)
+    current_user = Depends(require_school_management_access),
+    school_id: int = None
 ):
     """Get top students by memorization progress"""
     president_id = await get_current_president_id(current_user, db, school_id)
-    
+
     # Get students with their total achievement pages
-    students_result = await db.execute(
-        select(Student, User)
-        .join(User, Student.user_id == User.id)
-        .where(Student.president_id == president_id)
-    )
-    students_data = students_result.all()
-    if not students_data:
-        return []
-
-    student_ids = [s[0].id for s in students_data]
-    ach_result = await db.execute(
-        select(Achievement).where(Achievement.student_id.in_(student_ids))
-    )
-    achievements = ach_result.scalars().all()
-
-    pages_by_student: dict[int, float] = {s[0].id: 0.0 for s in students_data}
-    for ach in achievements:
-        pages_by_student[ach.student_id] = pages_by_student.get(ach.student_id, 0.0) + calculate_achievement_pages(
-            ach.from_surah, ach.from_verse, ach.to_surah, ach.to_verse
+    result = await db.execute(
+        select(
+            Student,
+            User,
+            func.count(Achievement.id).label('total_achievements')
         )
-
-    # Sort students by total pages descending
-    sorted_students = sorted(
-        students_data,
-        key=lambda pair: pages_by_student.get(pair[0].id, 0.0),
-        reverse=True
+        .join(User, Student.user_id == User.id)
+        .outerjoin(Achievement, Achievement.student_id == Student.id)
+        .where(Student.president_id == president_id)
+        .group_by(Student.id, User.id)
+        .order_by(func.count(Achievement.id).desc())
+        .limit(limit)
     )
-    top_students = sorted_students[:limit]
-    
+
+    students_data = result.all()
+
     return [
         {
             "student": f"{user.firstname} {user.lastname}",
-            "pages": int(round(pages_by_student.get(student.id, 0.0))),
+            "pages": count,
             "rank": idx + 1
         }
-        for idx, (student, user) in enumerate(top_students)
+        for idx, (student, user, count) in enumerate(students_data)
     ]
 
 
 @presidentRouter.get("/statistics/lecture-distribution", response_model=list[LectureDistributionResponse])
 async def get_lecture_distribution(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_supervisor),
-    school_id: Optional[int] = Query(None)
+    current_user = Depends(require_school_management_access),
+    school_id: int = None
 ):
     """Get student distribution across lectures"""
     president_id = await get_current_president_id(current_user, db, school_id)
-    
+
     # Get total students for percentage calculation
     total_students_result = await db.execute(
         select(func.count(Student.id)).where(Student.president_id == president_id)
     )
     total_students = total_students_result.scalar() or 0
-    
+
     if total_students == 0:
         return []
-    
+
     # Get lectures with student counts through SessionParticipation
     result = await db.execute(
         select(
@@ -453,9 +539,9 @@ async def get_lecture_distribution(
         .group_by(Lecture.id, Lecture.lecture_name_ar)
         .order_by(func.count(func.distinct(SessionParticipation.student_id)).desc())
     )
-    
+
     lectures_data = result.all()
-    
+
     return [
         {
             "className": lecture_name,
@@ -464,191 +550,3 @@ async def get_lecture_distribution(
         }
         for lecture_name, count in lectures_data
     ]
-
-
-def parse_date_safe(d_str: str | None) -> date | None:
-    """Helper to safely parse YYYY-MM-DD or DD-MM-YYYY dates"""
-    if not d_str:
-        return None
-    for fmt in ("%Y-%m-%d", "%d-%m-%Y"):
-        try:
-            return datetime.strptime(d_str.strip(), fmt).date()
-        except ValueError:
-            pass
-    return None
-
-
-@presidentRouter.get("/statistics/achievement-breakdown")
-async def get_president_achievement_breakdown(
-    lecture_id: int | None = None,
-    student_id: int | None = None,
-    start_date: str | None = None,
-    end_date: str | None = None,
-    db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_supervisor),
-    school_id: Optional[int] = Query(None)
-):
-    president_id = await get_current_president_id(current_user, db, school_id)
-    
-    query = select(Achievement).join(Student, Achievement.student_id == Student.id).where(Student.president_id == president_id)
-    
-    if lecture_id:
-        query = query.join(SessionParticipation, SessionParticipation.student_id == Student.id).where(SessionParticipation.lecture_id == lecture_id)
-        
-    if student_id:
-        query = query.where(Achievement.student_id == student_id)
-        
-    start_d = parse_date_safe(start_date)
-    end_d = parse_date_safe(end_date)
-    if start_d:
-        query = query.where(func.to_date(Achievement.date, 'DD-MM-YYYY') >= start_d)
-    if end_d:
-        query = query.where(func.to_date(Achievement.date, 'DD-MM-YYYY') <= end_d)
-        
-    result = await db.execute(query)
-    achievements = result.scalars().all()
-    
-    breakdown = {"normal": 0.0, "small": 0.0, "big": 0.0}
-    for ach in achievements:
-        type_key = str(ach.achievement_type.value if hasattr(ach.achievement_type, "value") else ach.achievement_type).lower()
-        if type_key in breakdown:
-            pages = calculate_achievement_pages(ach.from_surah, ach.from_verse, ach.to_surah, ach.to_verse)
-            breakdown[type_key] += pages
-            
-    return {k: round(v, 1) for k, v in breakdown.items()}
-
-
-@presidentRouter.get("/statistics/attendance-breakdown")
-async def get_president_attendance_breakdown(
-    lecture_id: int | None = None,
-    student_id: int | None = None,
-    start_date: str | None = None,
-    end_date: str | None = None,
-    db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_supervisor),
-    school_id: Optional[int] = Query(None)
-):
-    president_id = await get_current_president_id(current_user, db, school_id)
-    
-    query = select(Attendance).join(Student, Attendance.student_id == Student.id).where(Student.president_id == president_id)
-    
-    if lecture_id:
-        query = query.join(SessionParticipation, SessionParticipation.student_id == Student.id).where(SessionParticipation.lecture_id == lecture_id)
-        
-    if student_id:
-        query = query.where(Attendance.student_id == student_id)
-        
-    start_d = parse_date_safe(start_date)
-    end_d = parse_date_safe(end_date)
-    if start_d:
-        query = query.where(func.to_date(Attendance.date, 'DD-MM-YYYY') >= start_d)
-    if end_d:
-        query = query.where(func.to_date(Attendance.date, 'DD-MM-YYYY') <= end_d)
-        
-    result = await db.execute(query)
-    attendances = result.scalars().all()
-    
-    counts = {"present": 0, "late": 0, "absent": 0, "excused": 0}
-    for att in attendances:
-        status_key = str(att.status.value if hasattr(att.status, "value") else att.status).lower()
-        if status_key in counts:
-            counts[status_key] += 1
-            
-    counts["total"] = sum(counts.values())
-    return counts
-
-
-@presidentRouter.get("/statistics/halqa-breakdown")
-async def get_president_halqa_breakdown(
-    lecture_id: int,
-    start_date: str | None = None,
-    end_date: str | None = None,
-    db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_supervisor),
-    school_id: Optional[int] = Query(None)
-):
-    president_id = await get_current_president_id(current_user, db, school_id)
-    
-    students_query = await db.execute(
-        select(Student, User)
-        .join(User, Student.user_id == User.id)
-        .join(SessionParticipation, Student.id == SessionParticipation.student_id)
-        .where(SessionParticipation.lecture_id == lecture_id, Student.president_id == president_id)
-        .distinct()
-    )
-    students = students_query.all()
-    if not students:
-        return []
-        
-    student_ids = [s[0].id for s in students]
-    query = select(Achievement).where(Achievement.student_id.in_(student_ids))
-    start_d = parse_date_safe(start_date)
-    end_d = parse_date_safe(end_date)
-    if start_d:
-        query = query.where(func.to_date(Achievement.date, 'DD-MM-YYYY') >= start_d)
-    if end_d:
-        query = query.where(func.to_date(Achievement.date, 'DD-MM-YYYY') <= end_d)
-        
-    ach_result = await db.execute(query)
-    achievements = ach_result.scalars().all()
-    
-    pages_by_student = {s[0].id: 0.0 for s in students}
-    for ach in achievements:
-        pages = calculate_achievement_pages(ach.from_surah, ach.from_verse, ach.to_surah, ach.to_verse)
-        pages_by_student[ach.student_id] = pages_by_student.get(ach.student_id, 0.0) + pages
-        
-    return [
-        {
-            "student": f"{user.firstname} {user.lastname}",
-            "pages": round(pages_by_student.get(student.id, 0.0), 1)
-        }
-        for student, user in students
-    ]
-
-
-@presidentRouter.get("/statistics/progress-timeline")
-async def get_president_progress_timeline(
-    student_id: int,
-    start_date: str | None = None,
-    end_date: str | None = None,
-    db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_supervisor),
-    school_id: Optional[int] = Query(None)
-):
-    president_id = await get_current_president_id(current_user, db, school_id)
-    
-    check_query = await db.execute(
-        select(Student.id).where(Student.id == student_id, Student.president_id == president_id)
-    )
-    if not check_query.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
-        
-    query = select(Achievement).where(Achievement.student_id == student_id)
-    start_d = parse_date_safe(start_date)
-    end_d = parse_date_safe(end_date)
-    if start_d:
-        query = query.where(func.to_date(Achievement.date, 'DD-MM-YYYY') >= start_d)
-    if end_d:
-        query = query.where(func.to_date(Achievement.date, 'DD-MM-YYYY') <= end_d)
-        
-    ach_result = await db.execute(query.order_by(Achievement.created_at.asc()))
-    achievements = ach_result.scalars().all()
-    
-    from collections import OrderedDict
-    by_date = OrderedDict()
-    for ach in achievements:
-        d = ach.date or (ach.created_at.strftime("%d-%m-%Y") if ach.created_at else "01-01-2026")
-        short_date = "/".join(d.split("-")[:2]) if "-" in d else d
-        if short_date not in by_date:
-            by_date[short_date] = {"date": short_date, "memorization": 0.0, "minorRev": 0.0, "majorRev": 0.0}
-        
-        pages = calculate_achievement_pages(ach.from_surah, ach.from_verse, ach.to_surah, ach.to_verse)
-        type_key = str(ach.achievement_type.value if hasattr(ach.achievement_type, "value") else ach.achievement_type).lower()
-        if type_key == "normal":
-            by_date[short_date]["memorization"] += pages
-        elif type_key == "small":
-            by_date[short_date]["minorRev"] += pages
-        elif type_key == "big":
-            by_date[short_date]["majorRev"] += pages
-            
-    return list(by_date.values())

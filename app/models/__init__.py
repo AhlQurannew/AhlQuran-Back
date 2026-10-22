@@ -1,5 +1,5 @@
 # Import all models so they're registered with Base.metadata
-# This is needed for alembic and create_all() to work
+# Import models so Alembic can discover all mapped tables.
 from app.models.user import User, UserRoleEnum
 from app.models.president import President
 from app.models.supervisor import Supervisor
@@ -15,6 +15,7 @@ from app.models.lecture import Lecture, WeeklySchedule
 from app.models.message import Message
 from app.models.attendance import Attendance, AttendanceStatus
 from app.models.teacher_attendance import TeacherAttendance
+from app.models.account_preference import AccountPreference
 
 __all__ = [
     "User",

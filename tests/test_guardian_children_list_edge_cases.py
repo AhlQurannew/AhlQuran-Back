@@ -76,14 +76,13 @@ async def test_guardian_with_no_children_returns_empty_list():
             db_session.add(guardian_user)
             await db_session.flush()
             
-            # Create guardian record WITHOUT linking to any student (student_id=None)
+            # Create guardian record without linked students.
             guardian = Guardian(
                 user_id=guardian_user.id,
                 president_id=president.id,
                 first_name="NoChildren",
                 last_name="Guardian",
                 relationship_to_student="Father",
-                student_id=None,  # No children linked
                 created_at=datetime.now(timezone.utc),
                 created_by_id=president_user.id
             )
@@ -219,7 +218,7 @@ async def test_guardian_with_null_president_id_returns_404():
                 first_name="NullPresident",
                 last_name="Guardian",
                 relationship_to_student="Mother",
-                student_id=student.id,  # Linked to student
+                students=[student],
                 created_at=datetime.now(timezone.utc),
                 created_by_id=president_user.id
             )
@@ -364,7 +363,7 @@ async def test_pagination_with_various_skip_limit_values():
                     first_name=f"Guardian{i}",
                     last_name="Pagination",
                     relationship_to_student="Parent",
-                    student_id=student_ids[i],
+                    students=[students[i]],
                     created_at=datetime.now(timezone.utc),
                     created_by_id=president_user.id
                 )

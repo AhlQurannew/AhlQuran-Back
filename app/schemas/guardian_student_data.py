@@ -4,7 +4,7 @@ These models are used for the guardian achievement and attendance endpoints.
 """
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from datetime import date
+from datetime import date as DateType
 
 
 class StudentContext(BaseModel):
@@ -45,7 +45,8 @@ class GuardianAttendanceResponse(BaseModel):
     """Single attendance record with student context for guardian access."""
     id: int = Field(..., description="Attendance ID")
     student: StudentContext = Field(..., description="Student information")
-    date: str = Field(..., description="Attendance date in DD-MM-YYYY format", example="17-12-2024")
+    date: DateType = Field(..., description="Attendance date in ISO format", example="2026-10-15")
+    lecture_id: Optional[int] = None
     status: str = Field(..., description="Attendance status (present, late, absent, excused)")
     notes: Optional[str] = Field(None, description="Additional notes about the attendance")
     

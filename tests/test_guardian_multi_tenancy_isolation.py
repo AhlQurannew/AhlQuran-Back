@@ -129,7 +129,7 @@ async def test_multi_tenancy_isolation_property(db_session):
         first_name="Guardian",
         last_name="One",
         relationship_to_student="Parent",
-        student_id=student_1.id,
+        students=[student_1],
         created_at=datetime.now(timezone.utc),
         created_by_id=president_a_user.id
     )
@@ -184,7 +184,7 @@ async def test_multi_tenancy_isolation_property(db_session):
         first_name="Guardian",
         last_name="Two",
         relationship_to_student="Parent",
-        student_id=student_2.id,
+        students=[student_2],
         created_at=datetime.now(timezone.utc),
         created_by_id=president_b_user.id
     )

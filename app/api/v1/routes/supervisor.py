@@ -6,14 +6,24 @@ from app.db.session import get_db
 from app.models.user import User, UserRoleEnum
 from app.models.supervisor import Supervisor
 from app.schemas.supervisor import SupervisorCreate, SupervisorUpdate, SupervisorResponse, SupervisorList
-from app.core.dependencies import get_current_user, require_president
-from app.core.multi_tenancy import get_president_id_for_user, get_created_by_user_id
+from app.core.dependencies import (
+    require_president_chief_supervisor_or_admin,
+)
+from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 from app.core.security import get_password_hash
 import logging
 
 logger = logging.getLogger(__name__)
 
 supervisorRouter = APIRouter()
+
+
+def _ensure_regular_supervisor_target(supervisor: Supervisor, current_user) -> None:
+    if (
+        getattr(current_user, "role", None) == UserRoleEnum.CHIEF_SUPERVISOR
+        and supervisor.user.role != UserRoleEnum.SUPERVISOR
+    ):
+        raise HTTPException(status_code=404, detail="Supervisor not found")
 
 
 def map_supervisor_to_response(supervisor: Supervisor) -> SupervisorResponse:
@@ -33,59 +43,39 @@ def map_supervisor_to_response(supervisor: Supervisor) -> SupervisorResponse:
 async def create_supervisor(
     supervisor_data: SupervisorCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president)
+    current_user=Depends(require_president_chief_supervisor_or_admin),
+    school_id: int | None = None,
 ):
-    """Create a new supervisor. Only presidents can create supervisors."""
-    
-    # Get president ID
-    president_id = await get_president_id_for_user(current_user, db)
-    
-    # Check if email already exists
-    result = await db.execute(
-        select(User).where(User.email == supervisor_data.email)
-    )
-    existing_user = result.scalar_one_or_none()
+    """Create a regular supervisor within the selected school."""
+    president_id = await get_president_id_for_user(current_user, db, school_id)
+    existing_user = await db.execute(select(User).where(User.email == supervisor_data.email))
+    if existing_user.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Email already registered")
 
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-
-    # Create user record
     new_user = User(
         firstname=supervisor_data.firstname,
         lastname=supervisor_data.lastname,
         email=supervisor_data.email,
         hashed_password=get_password_hash(supervisor_data.password),
         role=UserRoleEnum.SUPERVISOR,
-        is_active=True
+        is_active=True,
     )
-
     db.add(new_user)
     await db.flush()
-
-    # Create supervisor record with president_id
     new_supervisor = Supervisor(
         user_id=new_user.id,
         president_id=president_id,
-        created_by_id=get_created_by_user_id(current_user)
+        created_by_id=await get_creator_user_id(current_user, president_id, db),
     )
-
     db.add(new_supervisor)
     await db.commit()
-    
-    # Reload with relationships
-    result = await db.execute(
+
+    loaded = await db.execute(
         select(Supervisor)
         .options(selectinload(Supervisor.user))
-        .where(Supervisor.id == new_supervisor.id)
+        .where(Supervisor.id == new_supervisor.id, Supervisor.president_id == president_id)
     )
-    loaded_supervisor = result.scalar_one()
-
-    logger.info(f"Supervisor created: {new_supervisor.id} by user {current_user.id}")
-
-    return map_supervisor_to_response(loaded_supervisor)
+    return map_supervisor_to_response(loaded.scalar_one())
 
 
 @supervisorRouter.get("/", response_model=SupervisorList)
@@ -93,23 +83,28 @@ async def list_supervisors(
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president)
+    current_user=Depends(require_president_chief_supervisor_or_admin),
+    school_id: int | None = None,
 ):
-    """Get all supervisors. Only presidents can view supervisors."""
+    """Get manageable supervisors for the current school."""
 
     # Get president ID for filtering
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
 
     query = select(Supervisor).options(
         selectinload(Supervisor.user)
     ).where(Supervisor.president_id == president_id).offset(skip).limit(limit)
+    count_query = select(Supervisor).where(Supervisor.president_id == president_id)
+    if getattr(current_user, "role", None) == UserRoleEnum.CHIEF_SUPERVISOR:
+        query = query.join(User, User.id == Supervisor.user_id).where(User.role == UserRoleEnum.SUPERVISOR)
+        count_query = count_query.join(User, User.id == Supervisor.user_id).where(User.role == UserRoleEnum.SUPERVISOR)
     
     result = await db.execute(query)
     supervisors = result.scalars().unique().all()
 
     # Get total count with same filter
     count_result = await db.execute(
-        select(Supervisor).where(Supervisor.president_id == president_id)
+        count_query
     )
     total = len(count_result.scalars().all())
 
@@ -122,13 +117,14 @@ async def list_supervisors(
 async def get_supervisor(
     supervisor_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president)
+    current_user=Depends(require_president_chief_supervisor_or_admin),
+    school_id: int | None = None,
 ):
-    """Get a specific supervisor by ID. Only presidents can view supervisors."""
+    """Get a supervisor in the current school."""
 
     # Get president ID for filtering
     # Get president ID for filtering
-    president_id = await get_president_id_for_user(current_user, db)
+    president_id = await get_president_id_for_user(current_user, db, school_id)
 
     result = await db.execute(
         select(Supervisor)
@@ -143,6 +139,8 @@ async def get_supervisor(
             detail=f"Supervisor with ID {supervisor_id} not found"
         )
 
+    _ensure_regular_supervisor_target(supervisor, current_user)
+
     return map_supervisor_to_response(supervisor)
 
 
@@ -151,14 +149,17 @@ async def update_supervisor(
     supervisor_id: int,
     supervisor_data: SupervisorUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president)
+    current_user=Depends(require_president_chief_supervisor_or_admin),
+    school_id: int | None = None,
 ):
-    """Update supervisor information. Only presidents can update supervisors."""
+    """Update a manageable supervisor in the current school."""
+
+    president_id = await get_president_id_for_user(current_user, db, school_id)
 
     result = await db.execute(
         select(Supervisor)
         .options(selectinload(Supervisor.user))
-        .where(Supervisor.id == supervisor_id)
+        .where(Supervisor.id == supervisor_id, Supervisor.president_id == president_id)
     )
     supervisor = result.scalar_one_or_none()
 
@@ -167,6 +168,8 @@ async def update_supervisor(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Supervisor with ID {supervisor_id} not found"
         )
+
+    _ensure_regular_supervisor_target(supervisor, current_user)
 
     # Update user fields
     update_data = supervisor_data.model_dump(exclude_unset=True)
@@ -204,14 +207,17 @@ async def update_supervisor(
 async def delete_supervisor(
     supervisor_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_president)
+    current_user=Depends(require_president_chief_supervisor_or_admin),
+    school_id: int | None = None,
 ):
-    """Delete a supervisor and their associated user account. Only presidents can delete supervisors."""
+    """Delete a manageable supervisor in the current school."""
+
+    president_id = await get_president_id_for_user(current_user, db, school_id)
 
     result = await db.execute(
         select(Supervisor)
         .options(selectinload(Supervisor.user))
-        .where(Supervisor.id == supervisor_id)
+        .where(Supervisor.id == supervisor_id, Supervisor.president_id == president_id)
     )
     supervisor = result.scalar_one_or_none()
 
@@ -221,15 +227,12 @@ async def delete_supervisor(
             detail=f"Supervisor with ID {supervisor_id} not found"
         )
 
-    # Store user for deletion
-    user_to_delete = supervisor.user
-    
-    # Delete the supervisor first
+    _ensure_regular_supervisor_target(supervisor, current_user)
+
+    # Delete the supervisor (will cascade to user due to relationship)
     await db.delete(supervisor)
-    # Then delete the user to free up the email
-    await db.delete(user_to_delete)
     await db.commit()
 
-    logger.info(f"Supervisor {supervisor_id} and user {user_to_delete.id} deleted by user {current_user.id}")
+    logger.info(f"Supervisor {supervisor_id} deleted by user {current_user.id}")
 
     return None

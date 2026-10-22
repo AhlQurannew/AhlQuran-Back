@@ -10,13 +10,14 @@ class Admin(Base):
 
     id : Mapped[int] = mapped_column(primary_key=True, index=True)
     user : Mapped[str] = mapped_column(String, unique=True, index=True)
-    password : Mapped[str] = mapped_column(String)
+    password_hash: Mapped[str] = mapped_column("password", String)
     
     role : Mapped[str] = mapped_column(String, default="admin")
+    auth_version: Mapped[int] = mapped_column(default=0, server_default="0", nullable=False)
 
     created_by_id: Mapped[Optional[int]] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True) , default=lambda: datetime.now(timezone.utc))
      
 
     def __repr__(self):
-        return f"<Admin(id={self.id}, user={self.user}, password={self.password})>"
+        return f"<Admin(id={self.id}, user={self.user})>"

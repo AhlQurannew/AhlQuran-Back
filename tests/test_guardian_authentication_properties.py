@@ -720,7 +720,7 @@ async def test_children_list_completeness_property():
                 first_name=guardian_firstname,
                 last_name=guardian_lastname,
                 relationship_to_student="Parent",
-                student_id=student.id,
+                students=[student],
                 created_at=datetime.now(timezone.utc),
                 created_by_id=president_user.id
             )

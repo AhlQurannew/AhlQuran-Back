@@ -13,7 +13,7 @@ from app.models.session import Session
 from app.models.sessionParticipation import SessionParticipation, ParticipationStatus
 from app.models.acheivements import Achievement
 from app.models.lecture import Lecture, WeeklySchedule
-from app.models.message import Message
+from app.models.message import Message, MessageAttachment
 from app.models.attendance import Attendance, AttendanceStatus
 from app.models.teacher_attendance import TeacherAttendance
 from app.models.account_preference import AccountPreference
@@ -36,6 +36,7 @@ __all__ = [
     "Lecture",
     "WeeklySchedule",
     "Message",
+    "MessageAttachment",
     "Attendance",
     "AttendanceStatus",
     "TeacherAttendance",

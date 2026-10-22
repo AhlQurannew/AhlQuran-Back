@@ -22,7 +22,7 @@ from app.db.base import Base  # Import your Base with all models
 from app.models import (
     User, UserRoleEnum, President, Supervisor, Teacher, Student, Guardian, Admin,
     Session, SessionParticipation, ParticipationStatus,
-    Achievement, Lecture, WeeklySchedule, Message
+    Achievement, Lecture, WeeklySchedule, Message, MessageAttachment
 )
 from app.models.account_preference import AccountPreference
 from app.models.attendance import Attendance

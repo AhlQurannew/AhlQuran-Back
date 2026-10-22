@@ -8,6 +8,9 @@ class SenderRole(str, Enum):
     SUPERVISOR = "supervisor"
     CHIEF_SUPERVISOR = "chief_supervisor"
     PRESIDENT = "president"
+    STUDENT = "student"
+    GUARDIAN = "guardian"
+    ADMIN = "admin"
     
     def __str__(self):
         return self.value
@@ -18,13 +21,23 @@ class MessageCreate(BaseModel):
     sender_role: SenderRole | None = Field(None, example="teacher")
 
 
+class MessageAttachmentResponse(BaseModel):
+    id: int
+    filename: str
+    content_type: str
+    size: int
+    url: str
+
+
 class MessageResponse(BaseModel):
     id: int
-    sender_id: int
+    sender_id: int | None
+    admin_sender_id: int | None = None
     sender_name: str
-    sender_role: str  # plain str to handle all SenderRole enum values including chief_supervisor
+    sender_role: str
     message: str
     created_at: datetime
+    attachments: list[MessageAttachmentResponse] = Field(default_factory=list)
 
     class Config:
         from_attributes = True

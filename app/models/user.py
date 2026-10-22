@@ -10,7 +10,6 @@ class UserRoleEnum(str, Enum):
     PRESIDENT = "PRESIDENT"
     CHIEF_SUPERVISOR = "CHIEF_SUPERVISOR"  # المشرف العام - Can manage supervisors
     SUPERVISOR = "SUPERVISOR"
-    CHIEF_SUPERVISOR = "CHIEF_SUPERVISOR"
     TEACHER = "TEACHER"
     STUDENT = "STUDENT"
     GUARDIAN = "GUARDIAN"

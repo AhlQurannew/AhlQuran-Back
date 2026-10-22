@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from datetime import timedelta
 import logging
@@ -532,13 +532,16 @@ async def admin_login(
     db: AsyncSession = Depends(get_db)
 ):
     logger.info("Admin login attempt")
-    
+    login_user = form_data.user.strip()
     result = await db.execute(
-        select(Admin).where(Admin.user == form_data.user)  
+        select(Admin).where(func.lower(Admin.user) == login_user.lower())
     )
     admin = result.scalar_one_or_none()
     
     if not admin:
+        logger.warning("Admin login rejected: account not found")
+        if settings.APP_ENV == "development":
+            logger.warning("Unmatched admin login identifier: %r", login_user)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
@@ -547,6 +550,7 @@ async def admin_login(
     
     # Verify password
     if not verify_password(form_data.password, admin.password_hash):
+        logger.warning("Admin login rejected: password mismatch for admin_id=%s", admin.id)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
@@ -556,6 +560,7 @@ async def admin_login(
     if not is_password_hashed(admin.password_hash):
         admin.password_hash = get_password_hash(form_data.password)
         await db.commit()
+    logger.info("Admin login succeeded: admin_id=%s", admin.id)
     
         #  if not admin.is_active:
         #   raise HTTPException(

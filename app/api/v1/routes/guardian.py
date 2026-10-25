@@ -945,7 +945,6 @@ async def create_guardian(
     for student in linked_students:
         student.guardian_id = new_guardian.id
     new_guardian.user = new_user
-    new_guardian.students = linked_students
     await db.commit()
     loaded = await db.execute(
         select(Guardian)

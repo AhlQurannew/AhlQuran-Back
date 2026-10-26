@@ -28,6 +28,7 @@ class User(Base):
 
     # Account status fields
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    auth_version: Mapped[int] = mapped_column(default=0, server_default="0", nullable=False)
     
     # Relationships
     president: Mapped[Optional["President"]] = relationship(

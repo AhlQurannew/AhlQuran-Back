@@ -27,6 +27,11 @@ class AchievementCreate(AchievementBase):
     student_id: Optional[int] = Field(None, gt=0, example=1)
 
 
+class AchievementBulkCreate(AchievementBase):
+    student_ids: list[int] = Field(..., min_length=1, max_length=10000)
+    lecture_id: Optional[int] = Field(None, gt=0)
+
+
 class AchievementUpdate(BaseModel):
     from_surah: Optional[int] = Field(None, ge=1, le=114)  # Chapter number 1-114
     to_surah: Optional[int] = Field(None, ge=1, le=114)    # Chapter number 1-114
@@ -50,4 +55,3 @@ class AchievementResponse(AchievementBase):
 class AchievementList(BaseModel):
     achievements: list[AchievementResponse]
     total: int
-

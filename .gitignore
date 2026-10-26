@@ -1,7 +1,37 @@
-﻿node_modules/
-venv/
-.env
+# Python
 __pycache__/
 *.py[cod]
-*.class
-*.pyc
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# Environment and local secrets
+.env
+.env.*
+!.env.example
+
+# Local database exports and backups
+database_backup*.sql
+*.dump
+*.backup
+
+# Test and coverage output
+.pytest_cache/
+.hypothesis/
+.coverage
+htmlcov/
+
+# Local uploads and logs
+uploads/
+*.log
+
+# Editors and operating systems
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

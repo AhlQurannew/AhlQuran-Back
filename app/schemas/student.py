@@ -87,6 +87,7 @@ class StudentResponse(BaseModel):
     # Keep flat fields if needed for other endpoints, but frontend mainly uses nested
     id: int
     user_id: int
+    photo: Optional[str] = None
     
     # Nested structures matching frontend Student.fromJson
     personalInfo: PersonalInfo

@@ -2,7 +2,8 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 
 from sqlalchemy.orm import selectinload
@@ -55,14 +56,10 @@ async def approve_president(
     db: AsyncSession = Depends(get_db),
     admin = Depends(require_admin)
 ):
-    logger.info(f"Admin __ : {admin}")
-
     result = await db.execute(
         select(User).options(selectinload(User.president)).where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
-
-    logger.info(f"the president {result}")
 
     if not user:
         raise HTTPException(
@@ -310,11 +307,11 @@ async def get_all_schools(
             "total": len(schools_list),
             "schools": schools_list
         }
-    except Exception as e:
-        logger.error(f"[SCHOOLS] Error: {str(e)}")
+    except Exception:
+        logger.exception("Failed to fetch school overview")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error fetching schools: {str(e)}"
+            detail="Unable to fetch schools"
         )
 
 
@@ -554,9 +551,16 @@ async def create_school(
                 detail=f"Missing required fields: {', '.join(missing_fields)}"
             )
         
-        # Check if email already exists
+        school_email = str(school_data['email']).strip().lower()
+        if not school_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email is required"
+            )
+
+        # Emails are treated case-insensitively and stored in a normalized form.
         result = await db.execute(
-            select(User).where(User.email == school_data['email'])
+            select(User).where(func.lower(User.email) == school_email)
         )
         existing_user = result.scalar_one_or_none()
         
@@ -596,7 +600,7 @@ async def create_school(
         chief_user = User(
             firstname=school_data['chief_supervisor_firstname'],
             lastname=school_data['chief_supervisor_lastname'],
-            email=school_data['email'],
+            email=school_email,
             hashed_password=get_password_hash(school_data['password']),
             role=UserRoleEnum.CHIEF_SUPERVISOR,
             is_active=True
@@ -635,6 +639,13 @@ async def create_school(
         
     except HTTPException:
         raise
+    except IntegrityError as e:
+        await db.rollback()
+        logger.info("[CREATE SCHOOL] Duplicate email rejected during commit")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already exists"
+        ) from e
     except Exception as e:
         logger.error(f"[CREATE SCHOOL] Error: {str(e)}")
         await db.rollback()
@@ -711,6 +722,7 @@ async def get_schools_statistics(
     # Get schools with student counts
     result_schools = await db.execute(
         select(
+            President.id.label('school_id'),
             President.school_name,
             User.firstname,
             User.lastname,
@@ -731,6 +743,7 @@ async def get_schools_statistics(
         percentage = (student_count / total_students * 100) if total_students > 0 else 0
         
         schools_list.append({
+            "school_id": row.school_id,
             "school_name": row.school_name,
             "student_count": student_count,
             "president_name": president_name,

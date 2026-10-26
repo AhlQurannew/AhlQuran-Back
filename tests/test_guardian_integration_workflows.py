@@ -128,7 +128,7 @@ async def test_complete_guardian_workflow_login_to_child_detail():
                 first_name="Workflow",
                 last_name="Guardian",
                 relationship_to_student="Mother",
-                student_id=student.id,
+                students=[student],
                 created_at=datetime.now(timezone.utc),
                 created_by_id=president_user.id
             )
@@ -323,7 +323,7 @@ async def test_authorization_failures_across_endpoints():
                 first_name="Auth",
                 last_name="Guardian",
                 relationship_to_student="Father",
-                student_id=student.id,
+                students=[student],
                 created_at=datetime.now(timezone.utc),
                 created_by_id=president_user.id
             )
@@ -498,7 +498,7 @@ async def test_multi_tenancy_isolation_with_multiple_presidents():
                 first_name="Guardian",
                 last_name="A",
                 relationship_to_student="Father",
-                student_id=student_a.id,
+                students=[student_a],
                 created_at=datetime.now(timezone.utc),
                 created_by_id=president_a_user.id
             )
@@ -697,7 +697,7 @@ async def test_response_schema_consistency_property():
                 first_name="Schema",
                 last_name="Guardian",
                 relationship_to_student="Father",
-                student_id=student.id,
+                students=[student],
                 created_at=datetime.now(timezone.utc),
                 created_by_id=president_user.id
             )

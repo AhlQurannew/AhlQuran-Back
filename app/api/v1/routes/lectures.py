@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import joinedload
-from typing import List, Optional
+from typing import List
 
 from app.db.session import get_db
-from app.core.dependencies import require_president_or_supervisor, require_president_or_admin
+from app.core.dependencies import require_school_management_access
 from app.core.multi_tenancy import get_president_id_for_user
 from app.schemas.lecture import (
     LectureCreate,
@@ -23,10 +23,27 @@ from app.models.sessionParticipation import SessionParticipation
 lectureRouter = APIRouter()
 
 
+async def _get_school_teachers(db: AsyncSession, teacher_ids: list[int], president_id: int) -> list[Teacher]:
+    if len(teacher_ids) != len(set(teacher_ids)):
+        raise HTTPException(status_code=400, detail="Duplicate teacher IDs are not allowed")
+    if not teacher_ids:
+        return []
+    result = await db.execute(
+        select(Teacher).where(
+            Teacher.id.in_(teacher_ids),
+            Teacher.president_id == president_id,
+        )
+    )
+    teachers = result.scalars().all()
+    if len(teachers) != len(teacher_ids):
+        raise HTTPException(status_code=404, detail="One or more teachers were not found in this school")
+    return list(teachers)
+
+
 @lectureRouter.get("/", response_model=List[LectureResponse])
 async def get_lectures_basic(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_supervisor),  # Allow supervisors
+    current_user = Depends(require_school_management_access),
     school_id: int = None
 ):
     """
@@ -62,8 +79,8 @@ async def get_lectures_basic(
 @lectureRouter.get("/special/lectures", response_model=List[LectureResponse])
 async def get_all_lectures(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_supervisor),  # Allow supervisors
-    school_id: Optional[int] = Query(None)
+    current_user = Depends(require_school_management_access),
+    school_id: int = None
 ):
     """
     Get all lectures with full details including teachers, schedules, and student count
@@ -130,7 +147,7 @@ async def get_all_lectures(
 async def get_lecture_by_id(
     lecture_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_supervisor),  # Allow supervisors
+    current_user = Depends(require_school_management_access),
     school_id: int = None
 ):
     """
@@ -200,8 +217,8 @@ async def get_lecture_by_id(
 async def create_lecture(
     lecture_data: LectureCreate,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_supervisor),  # Allow supervisors
-    school_id: Optional[int] = Query(None)
+    current_user = Depends(require_school_management_access),
+    school_id: int = None
 ):
     """
     Create a new lecture with teachers and schedules
@@ -225,16 +242,7 @@ async def create_lecture(
     # Add teachers if provided - use direct SQL to avoid lazy loading
     if lecture_data.teachers:
         teacher_ids = [t.teacher_id for t in lecture_data.teachers]
-        # Filter teachers by president_id to ensure supervisors can only assign their own teachers
-        teachers_query = await db.execute(
-            select(Teacher).where(
-                Teacher.id.in_(teacher_ids),
-                Teacher.president_id == president_id
-            )
-        )
-        teachers = teachers_query.scalars().all()
-        
-        # Now refresh with teachers loaded and assign
+        teachers = await _get_school_teachers(db, teacher_ids, president_id)
         await db.refresh(new_lecture, ['teachers'])
         new_lecture.teachers = list(teachers)
     
@@ -299,24 +307,14 @@ async def update_lecture(
     lecture_id: int,
     lecture_data: LectureUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_supervisor),  # Allow supervisors
-    school_id: Optional[int] = Query(None)
+    current_user = Depends(require_school_management_access),
+    school_id: int = None
 ):
     """
     Update an existing lecture
     """
-    # DEBUG: Log received data
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(f"UPDATE LECTURE {lecture_id}: Received {len(lecture_data.teachers)} teachers")
-    for t in lecture_data.teachers:
-        logger.info(f"  Teacher ID: {t.teacher_id}")
-    
-    # Get president ID for filtering (works for presidents, supervisors, and admins)
     president_id = await get_president_id_for_user(current_user, db, school_id)
-    logger.info(f"UPDATE LECTURE {lecture_id}: President ID = {president_id}")
-    
-    # Load lecture with relationships to avoid lazy loading issues
+    # Scope the lookup before loading relationships so IDs cannot cross school boundaries.
     result_query = await db.execute(
         select(Lecture).options(
             joinedload(Lecture.teachers),
@@ -341,19 +339,9 @@ async def update_lecture(
     # Update teachers - use direct assignment to avoid lazy loading
     if lecture_data.teachers:
         teacher_ids = [t.teacher_id for t in lecture_data.teachers]
-        logger.info(f"UPDATE LECTURE {lecture_id}: Assigning teacher IDs: {teacher_ids}")
-        # Filter teachers by president_id to ensure supervisors can only assign their own teachers
-        teachers_query = await db.execute(
-            select(Teacher).where(
-                Teacher.id.in_(teacher_ids),
-                Teacher.president_id == president_id
-            )
-        )
-        teachers = teachers_query.scalars().all()
-        logger.info(f"UPDATE LECTURE {lecture_id}: Found {len(teachers)} matching teachers")
+        teachers = await _get_school_teachers(db, teacher_ids, president_id)
         lecture.teachers = list(teachers)
     else:
-        logger.info(f"UPDATE LECTURE {lecture_id}: No teachers to assign")
         lecture.teachers = []
     
     # Update schedules - delete old ones and create new ones
@@ -427,13 +415,19 @@ async def update_lecture(
 async def delete_lecture(
     lecture_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_president_or_supervisor),  # Allow supervisors
+    current_user = Depends(require_school_management_access),
     school_id: int = None
 ):
     """
     Delete a lecture by ID
     """
-    result_query = await db.execute(select(Lecture).where(Lecture.id == lecture_id))
+    president_id = await get_president_id_for_user(current_user, db, school_id)
+    result_query = await db.execute(
+        select(Lecture).where(
+            Lecture.id == lecture_id,
+            Lecture.president_id == president_id,
+        )
+    )
     lecture = result_query.scalar_one_or_none()
     
     if not lecture:
@@ -446,4 +440,3 @@ async def delete_lecture(
     await db.commit()
     
     return None
-

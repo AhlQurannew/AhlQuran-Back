@@ -4,6 +4,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from app.core.config import settings
 import logging
+import hmac
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +21,13 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     Verify password with backward compatibility for plain text passwords.
     Returns True if password matches, False otherwise.
     """
-    try:
-        # First try bcrypt verification
-        return pwd_context.verify(plain_password, hashed_password)
-    except Exception:
-        # If bcrypt fails, check if it's a plain text password (legacy)
-        return plain_password == hashed_password
+    if is_password_hashed(hashed_password):
+        try:
+            return pwd_context.verify(plain_password, hashed_password)
+        except (TypeError, ValueError):
+            return False
+
+    return hmac.compare_digest(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
 
 def is_password_hashed(password: str) -> bool:
     """Check if a password is already properly hashed with bcrypt"""
@@ -41,7 +43,7 @@ async def upgrade_password_if_needed(db, user, plain_password: str) -> bool:
         user.hashed_password = get_password_hash(plain_password)
         db.add(user)
         await db.commit()
-        logger.info(f"Upgraded password for user {user.email} (ID: {user.id})")
+        logger.info("Upgraded legacy password for user_id=%s", user.id)
         return True
     return False
 
@@ -101,6 +103,6 @@ def decode_token(token: str) -> Optional[dict]:
             algorithms=[settings.ALGORITHM]
         )
         return payload
-    except JWTError as e:
-        logger.error(f"Token decode error: {e}")
+    except JWTError:
+        logger.info("Rejected invalid or expired authentication token")
         return None

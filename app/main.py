@@ -1,11 +1,14 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 from contextlib import asynccontextmanager
 import logging
+from fastapi import Depends
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.init_db import init_db
+from app.db.session import engine, get_db
 from app.api.v1.routes import register_routes
 
 
@@ -19,16 +22,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app : FastAPI):
-    # Startup
     logger.info("🚀 Starting Ahl Quran School Management API...")
-    try:
-        await init_db()
-        logger.info("✅ Application startup complete")
-    except Exception as e:
-        logger.error(f"❌ Startup failed: {str(e)}")
-        raise
     yield
-    logger.info("👋 Shutting down application...")
+    await engine.dispose()
+    logger.info("Application shutdown complete")
 
 
 app = FastAPI(
@@ -42,29 +39,23 @@ app = FastAPI(
 # CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://ahl-el-quran.vercel.app",
-        "http://localhost:3000",
-        "http://localhost:8000",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:8000",
-    ],
-    allow_origin_regex=r"https?:\/\/.*",
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled exception on {request.method} {request.url}: {exc}", exc_info=True)
-    return ORJSONResponse(
-        status_code=500,
-        content={"detail": f"Internal server error: {str(exc)}"},
-    )
-
 register_routes(app)
+
+@app.get("/health/live", tags=["health"])
+async def liveness():
+    return {"status": "ok"}
+
+
+@app.get("/health/ready", tags=["health"])
+async def readiness(db: AsyncSession = Depends(get_db)):
+    await db.execute(text("SELECT 1"))
+    return {"status": "ready"}
 
 @app.get("/")
 async def root():

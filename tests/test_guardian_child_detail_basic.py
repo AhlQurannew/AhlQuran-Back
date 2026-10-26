@@ -103,7 +103,7 @@ async def test_guardian_can_access_linked_child_detail():
                 first_name="Test",
                 last_name="Guardian",
                 relationship_to_student="Father",
-                student_id=student.id,
+                students=[student],
                 created_at=datetime.now(timezone.utc),
                 created_by_id=president_user.id
             )
@@ -256,7 +256,7 @@ async def test_guardian_cannot_access_unlinked_child():
                 first_name="Test",
                 last_name="Guardian",
                 relationship_to_student="Father",
-                student_id=student1.id,
+                students=[student1],
                 created_at=datetime.now(timezone.utc),
                 created_by_id=president_user.id
             )
@@ -362,7 +362,6 @@ async def test_guardian_cannot_access_nonexistent_student():
                 first_name="Test",
                 last_name="Guardian",
                 relationship_to_student="Father",
-                student_id=None,
                 created_at=datetime.now(timezone.utc),
                 created_by_id=president_user.id
             )

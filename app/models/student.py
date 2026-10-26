@@ -49,8 +49,13 @@ class Student(Base):
     academic_level: Mapped[Optional[str]] = mapped_column(String(50))
     grade: Mapped[Optional[str]] = mapped_column(String(50))
     school_name: Mapped[Optional[str]] = mapped_column(String(100))
+    profile_image: Mapped[Optional[str]] = mapped_column(String(255))
     
-    guardian_id: Mapped[Optional[int]] = mapped_column(Integer)
+    guardian_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("guardians.id", ondelete="SET NULL"),
+        index=True,
+    )
     
     # Many-to-Many relationship with Sessions through SessionParticipation
     participations: Mapped[List["SessionParticipation"]] = relationship(
@@ -82,6 +87,12 @@ class Student(Base):
     president: Mapped["President"] = relationship(
         "President",
         foreign_keys=[president_id]
+    )
+
+    guardian: Mapped[Optional["Guardian"]] = relationship(
+        "Guardian",
+        back_populates="students",
+        foreign_keys=[guardian_id],
     )
     
     def __repr__(self) -> str:

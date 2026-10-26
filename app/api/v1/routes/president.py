@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, String, cast
+from sqlalchemy import Date, select, func, String, cast
 from sqlalchemy.orm import selectinload
 from datetime import datetime, date
 from app.db.session import get_db
@@ -12,7 +12,7 @@ from app.models.teacher import Teacher
 from app.models.student import Student
 from app.models.guardian import Guardian
 from app.models.user import User, UserRoleEnum
-from app.models.attendance import Attendance
+from app.models.attendance import Attendance, AttendanceStatus
 from app.models.acheivements import Achievement
 from app.models.lecture import Lecture
 from app.models.sessionParticipation import SessionParticipation
@@ -33,13 +33,14 @@ from app.core.dependencies import (
     require_school_management_access,
 )
 from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
+from app.core.quran_pages import calculate_achievement_pages
 from app.core.account_lifecycle import restore_orphaned_account
 
 
 presidentRouter = APIRouter()
 
 
-async def get_current_president_id(current_user, db: AsyncSession, school_id: int = None) -> int:
+async def get_current_president_id(current_user, db: AsyncSession, school_id: int | None = None) -> int:
     """
     Helper function to get the president ID for the current user or admin viewing a school.
 
@@ -477,6 +478,291 @@ async def get_attendance_statistics(
         "daily": daily,
         "unassigned_legacy_count": legacy_result.scalar() or 0,
     }
+
+
+@presidentRouter.get("/statistics/achievement-breakdown")
+async def get_achievement_breakdown(
+    lecture_id: int | None = None,
+    student_id: int | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    school_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_school_management_access),
+):
+    """Count achievement types for the authenticated school and requested filters."""
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=422, detail="start_date must be on or before end_date")
+
+    president_id = await get_current_president_id(current_user, db, school_id)
+
+    enrolled_student_ids = None
+    if lecture_id is not None:
+        lecture_result = await db.execute(
+            select(Lecture.id).where(
+                Lecture.id == lecture_id,
+                Lecture.president_id == president_id,
+            )
+        )
+        if lecture_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Lecture not found")
+
+        enrolled_student_ids = (
+            select(SessionParticipation.student_id)
+            .join(Student, Student.id == SessionParticipation.student_id)
+            .where(
+                SessionParticipation.lecture_id == lecture_id,
+                Student.president_id == president_id,
+            )
+            .distinct()
+        )
+
+    if student_id is not None:
+        student_query = select(Student.id).where(
+            Student.id == student_id,
+            Student.president_id == president_id,
+        )
+        if enrolled_student_ids is not None:
+            student_query = student_query.where(Student.id.in_(enrolled_student_ids))
+        student_result = await db.execute(student_query)
+        if student_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Student not found in the selected school or lecture")
+
+    query = (
+        select(Achievement.achievement_type, func.count(Achievement.id))
+        .join(Student, Student.id == Achievement.student_id)
+        .where(Student.president_id == president_id)
+    )
+    if enrolled_student_ids is not None:
+        query = query.where(Student.id.in_(enrolled_student_ids))
+    if student_id is not None:
+        query = query.where(Student.id == student_id)
+
+    achievement_date = func.to_date(Achievement.date, "DD-MM-YYYY", type_=Date)
+    if start_date is not None:
+        query = query.where(achievement_date >= start_date)
+    if end_date is not None:
+        query = query.where(achievement_date <= end_date)
+
+    result = await db.execute(query.group_by(Achievement.achievement_type))
+    counts = {"normal": 0, "small": 0, "big": 0}
+    for achievement_type, count in result.all():
+        key = achievement_type.value if hasattr(achievement_type, "value") else str(achievement_type)
+        if key in counts:
+            counts[key] = count
+    return counts
+
+
+async def _get_school_statistics_scope(
+    db: AsyncSession,
+    president_id: int,
+    lecture_id: int | None,
+    student_id: int | None,
+):
+    enrolled_student_ids = None
+    if lecture_id is not None:
+        lecture_result = await db.execute(
+            select(Lecture.id).where(
+                Lecture.id == lecture_id,
+                Lecture.president_id == president_id,
+            )
+        )
+        if lecture_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Lecture not found")
+        enrolled_student_ids = (
+            select(SessionParticipation.student_id)
+            .join(Student, Student.id == SessionParticipation.student_id)
+            .where(
+                SessionParticipation.lecture_id == lecture_id,
+                Student.president_id == president_id,
+            )
+            .distinct()
+        )
+
+    if student_id is not None:
+        student_query = select(Student.id).where(
+            Student.id == student_id,
+            Student.president_id == president_id,
+        )
+        if enrolled_student_ids is not None:
+            student_query = student_query.where(Student.id.in_(enrolled_student_ids))
+        student_result = await db.execute(student_query)
+        if student_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Student not found in the selected school or lecture")
+
+    return enrolled_student_ids
+
+
+@presidentRouter.get("/statistics/attendance-breakdown")
+async def get_attendance_breakdown(
+    lecture_id: int | None = None,
+    student_id: int | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    school_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_school_management_access),
+):
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=422, detail="start_date must be on or before end_date")
+
+    president_id = await get_current_president_id(current_user, db, school_id)
+    enrolled_student_ids = await _get_school_statistics_scope(
+        db, president_id, lecture_id, student_id
+    )
+    query = (
+        select(Attendance.status, func.count(Attendance.id))
+        .join(Student, Student.id == Attendance.student_id)
+        .where(Student.president_id == president_id)
+    )
+    if lecture_id is not None:
+        query = query.where(
+            Attendance.lecture_id == lecture_id,
+            Attendance.student_id.in_(enrolled_student_ids),
+        )
+    if student_id is not None:
+        query = query.where(Attendance.student_id == student_id)
+    if start_date is not None:
+        query = query.where(Attendance.date >= start_date)
+    if end_date is not None:
+        query = query.where(Attendance.date <= end_date)
+
+    result = await db.execute(query.group_by(Attendance.status))
+    counts = {"present": 0, "late": 0, "absent": 0, "excused": 0}
+    for attendance_status, count in result.all():
+        key = attendance_status.value if hasattr(attendance_status, "value") else str(attendance_status)
+        if key in counts:
+            counts[key] = count
+    counts["total"] = sum(counts.values())
+    return counts
+
+
+@presidentRouter.get("/statistics/halqa-breakdown")
+async def get_halqa_breakdown(
+    lecture_id: int,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    school_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_school_management_access),
+):
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=422, detail="start_date must be on or before end_date")
+
+    president_id = await get_current_president_id(current_user, db, school_id)
+    enrolled_student_ids = await _get_school_statistics_scope(
+        db, president_id, lecture_id, None
+    )
+    achievement_date = func.to_date(Achievement.date, "DD-MM-YYYY", type_=Date)
+    query = (
+        select(
+            Student.id,
+            User.firstname,
+            User.lastname,
+            Achievement.from_surah,
+            Achievement.from_verse,
+            Achievement.to_surah,
+            Achievement.to_verse,
+        )
+        .join(User, User.id == Student.user_id)
+        .join(Achievement, Achievement.student_id == Student.id)
+        .where(
+            Student.president_id == president_id,
+            Student.id.in_(enrolled_student_ids),
+        )
+    )
+    if start_date is not None:
+        query = query.where(achievement_date >= start_date)
+    if end_date is not None:
+        query = query.where(achievement_date <= end_date)
+
+    result = await db.execute(query.order_by(User.firstname, User.lastname, Student.id))
+    students: dict[int, dict[str, int | float | str]] = {}
+    for student_pk, firstname, lastname, from_surah, from_verse, to_surah, to_verse in result.all():
+        student_data = students.setdefault(
+            student_pk,
+            {"student": f"{firstname} {lastname}".strip(), "pages": 0.0},
+        )
+        student_data["pages"] += calculate_achievement_pages(
+            from_surah, from_verse, to_surah, to_verse
+        )
+
+    return sorted(
+        ({**item, "pages": round(item["pages"], 1)} for item in students.values()),
+        key=lambda item: (-item["pages"], item["student"]),
+    )
+
+
+@presidentRouter.get("/statistics/progress-timeline")
+async def get_progress_timeline(
+    student_id: int,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    lecture_id: int | None = None,
+    school_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_school_management_access),
+):
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=422, detail="start_date must be on or before end_date")
+
+    president_id = await get_current_president_id(current_user, db, school_id)
+    enrolled_student_ids = await _get_school_statistics_scope(
+        db, president_id, lecture_id, student_id
+    )
+    achievement_date = func.to_date(Achievement.date, "DD-MM-YYYY", type_=Date)
+    query = (
+        select(
+            achievement_date.label("achievement_date"),
+            Achievement.achievement_type,
+            Achievement.from_surah,
+            Achievement.from_verse,
+            Achievement.to_surah,
+            Achievement.to_verse,
+        )
+        .join(Student, Student.id == Achievement.student_id)
+        .where(
+            Student.id == student_id,
+            Student.president_id == president_id,
+            Achievement.date.is_not(None),
+        )
+    )
+    if enrolled_student_ids is not None:
+        query = query.where(Student.id.in_(enrolled_student_ids))
+    if start_date is not None:
+        query = query.where(achievement_date >= start_date)
+    if end_date is not None:
+        query = query.where(achievement_date <= end_date)
+
+    result = await db.execute(query.order_by(achievement_date, Achievement.id))
+    daily_pages: dict[date, dict[str, float]] = {}
+    type_to_series = {"normal": "memorization", "small": "minorRev", "big": "majorRev"}
+    for achievement_day, achievement_type, from_surah, from_verse, to_surah, to_verse in result.all():
+        if achievement_day is None:
+            continue
+        type_key = achievement_type.value if hasattr(achievement_type, "value") else str(achievement_type)
+        series_key = type_to_series.get(type_key)
+        if series_key is None:
+            continue
+        daily_pages.setdefault(
+            achievement_day,
+            {"memorization": 0.0, "minorRev": 0.0, "majorRev": 0.0},
+        )[series_key] += calculate_achievement_pages(
+            from_surah, from_verse, to_surah, to_verse
+        )
+
+    totals = {"memorization": 0.0, "minorRev": 0.0, "majorRev": 0.0}
+    timeline = []
+    for achievement_day, page_counts in sorted(daily_pages.items()):
+        for series_key, pages in page_counts.items():
+            totals[series_key] += pages
+        timeline.append({
+            "date": achievement_day.isoformat(),
+            "memorization": round(totals["memorization"], 1),
+            "minorRev": round(totals["minorRev"], 1),
+            "majorRev": round(totals["majorRev"], 1),
+        })
+    return timeline
 
 
 @presidentRouter.get("/statistics/top-memorizers", response_model=list[MemorizationRecordResponse])

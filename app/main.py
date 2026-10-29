@@ -1,9 +1,8 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 from contextlib import asynccontextmanager
 import logging
-from fastapi import Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,6 +44,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+TRAILING_SLASH_PREFIXES = {
+    f"{settings.API_V1_PREFIX}/students",
+    f"{settings.API_V1_PREFIX}/teacher",
+    f"{settings.API_V1_PREFIX}/supervisor",
+    f"{settings.API_V1_PREFIX}/lectures",
+    f"{settings.API_V1_PREFIX}/guardians",
+    f"{settings.API_V1_PREFIX}/messages",
+    f"{settings.API_V1_PREFIX}/admin",
+    f"{settings.API_V1_PREFIX}/president",
+}
+
+@app.middleware("http")
+async def fix_proxy_redirects(request: Request, call_next):
+    if request.url.path in TRAILING_SLASH_PREFIXES:
+        request.scope["path"] = request.url.path + "/"
+    response = await call_next(request)
+    if response.status_code in (301, 302, 307, 308) and "location" in response.headers:
+        loc = response.headers["location"]
+        if loc.startswith("http://"):
+            response.headers["location"] = loc.replace("http://", "https://", 1)
+    return response
 
 register_routes(app)
 

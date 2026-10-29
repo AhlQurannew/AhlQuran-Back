@@ -9,8 +9,8 @@ env/
 .venv/
 
 # Environment and local secrets
-.env
-.env.*
+#env
+#.env.*
 !.env.example
 
 # Local database exports and backups

@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from sqlalchemy import func, select
@@ -282,7 +282,7 @@ async def get_sender_photo(
     owner_filter = AccountPreference.user_id == sender_id if sender_id is not None else AccountPreference.admin_id == admin_sender_id
     image_path = resolve_profile_image(await db.scalar(select(AccountPreference.profile_image).where(owner_filter)))
     if image_path is None:
-        raise HTTPException(status_code=404, detail="Sender has no profile image")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     return FileResponse(image_path, media_type="image/webp", headers={"Cache-Control": "private, max-age=300"})
 
 

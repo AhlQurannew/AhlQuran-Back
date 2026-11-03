@@ -994,7 +994,8 @@ async def get_account_photo(
     preference = await _get_account_preferences(db, account)
     image_path = resolve_profile_image(preference.profile_image if preference else None)
     if image_path is None:
-        raise HTTPException(status_code=404, detail="Account has no profile image")
+        # "No avatar" is a normal state: 204 keeps browser consoles free of 404 noise.
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     return FileResponse(image_path, media_type="image/webp", headers={"Cache-Control": "private, no-store"})
 
 

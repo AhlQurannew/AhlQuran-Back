@@ -8,8 +8,8 @@ services:
     branch: main
     autoDeploy: true
     healthCheckPath: /health/ready
-    # Single free instance: migrate, make sure the admin exists, then serve on Render's $PORT.
-    dockerCommand: sh -c "alembic upgrade head && python -m app.cli.admin seed && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
+    # Single free instance: start.sh migrates, makes sure the admin exists, then serves on Render's $PORT.
+    dockerCommand: sh /app/start.sh
     envVars:
       - key: APP_ENV
         value: production

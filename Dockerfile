@@ -24,6 +24,10 @@ COPY --chown=app:app ./app ./app
 COPY --chown=app:app alembic.ini /app/alembic.ini
 COPY --chown=app:app alembic /app/alembic
 
+# Start script for single-container hosts (Render); strip CRs in case it was checked out on Windows
+COPY --chown=app:app start.sh /app/start.sh
+RUN sed -i 's/\r$//' /app/start.sh
+
 USER app
 
 # Expose port

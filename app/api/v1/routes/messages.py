@@ -12,8 +12,10 @@ from app.core.config import settings
 from app.core.dependencies import get_current_user
 from app.core.multi_tenancy import get_president_id_for_user as resolve_president_id
 from app.db.session import get_db
+from app.models.account_preference import AccountPreference
 from app.models.admin import Admin
 from app.models.message import Message, MessageAttachment, SenderRole
+from app.services.profile_images import resolve_profile_image
 from app.schemas.message import MessageAttachmentResponse, MessageCreate, MessageList, MessageResponse
 from app.services.message_attachments import (
     AttachmentTooLarge,
@@ -257,6 +259,31 @@ async def get_message_attachment(
             "Content-Security-Policy": "default-src 'none'; sandbox",
         },
     )
+
+
+@messageRouter.get("/sender-photo")
+async def get_sender_photo(
+    sender_id: int | None = Query(None),
+    admin_sender_id: int | None = Query(None),
+    school_id: int | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Avatar of someone who posted in the caller's school chat (never of arbitrary accounts)."""
+    if (sender_id is None) == (admin_sender_id is None):
+        raise HTTPException(status_code=422, detail="Provide exactly one of sender_id or admin_sender_id")
+    president_id = await get_president_id_for_user(current_user, db, school_id)
+    sender_filter = Message.sender_id == sender_id if sender_id is not None else Message.admin_sender_id == admin_sender_id
+    has_posted = await db.scalar(
+        select(Message.id).where(Message.president_id == president_id, sender_filter).limit(1)
+    )
+    if has_posted is None:
+        raise HTTPException(status_code=404, detail="Sender not found")
+    owner_filter = AccountPreference.user_id == sender_id if sender_id is not None else AccountPreference.admin_id == admin_sender_id
+    image_path = resolve_profile_image(await db.scalar(select(AccountPreference.profile_image).where(owner_filter)))
+    if image_path is None:
+        raise HTTPException(status_code=404, detail="Sender has no profile image")
+    return FileResponse(image_path, media_type="image/webp", headers={"Cache-Control": "private, max-age=300"})
 
 
 @messageRouter.get("/", response_model=MessageList)

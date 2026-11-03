@@ -52,3 +52,24 @@ def test_profile_image_cleanup_cannot_escape_upload_directory(tmp_path, monkeypa
     remove_student_profile_image("../do-not-delete.webp")
 
     assert outside_file.exists()
+
+
+def test_account_profile_image_is_stored_per_owner(tmp_path, monkeypatch):
+    from app.services.profile_images import (
+        remove_profile_image,
+        resolve_profile_image,
+        store_account_profile_image,
+    )
+
+    monkeypatch.setattr(settings, "UPLOAD_DIR", str(tmp_path))
+    source = BytesIO()
+    Image.new("RGB", (4, 4), "gold").save(source, format="PNG")
+
+    stored_path = store_account_profile_image(source.getvalue(), owner="admin-3")
+
+    assert stored_path.startswith("accounts/admin-3/")
+    assert resolve_profile_image(stored_path) == (Path(tmp_path) / stored_path).resolve()
+    assert resolve_profile_image("../outside.webp") is None
+
+    remove_profile_image(stored_path)
+    assert resolve_profile_image(stored_path) is None

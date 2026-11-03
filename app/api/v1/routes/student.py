@@ -36,7 +36,7 @@ from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_i
 from app.core.security import get_password_hash
 from app.core.config import settings
 from app.services.profile_images import (
-    MAX_PROFILE_IMAGE_BYTES,
+    read_profile_image_upload,
     remove_student_profile_image,
     store_student_profile_image,
 )
@@ -401,19 +401,9 @@ async def upload_student_photo(
     """Upload a validated student profile image for the current school."""
     student = await _get_photo_student(student_id, db, current_user, school_id)
 
-    allowed_types = {"image/png", "image/jpeg", "image/webp"}
-    if file.content_type and file.content_type not in allowed_types:
-        raise HTTPException(status_code=415, detail="Upload a PNG, JPG, JPEG, or WebP image")
-    contents = bytearray()
-    while chunk := await file.read(64 * 1024):
-        contents.extend(chunk)
-        if len(contents) > MAX_PROFILE_IMAGE_BYTES:
-            raise HTTPException(status_code=413, detail="Image must be 2 MB or smaller")
-    if not contents:
-        raise HTTPException(status_code=400, detail="The uploaded image is empty")
-
+    contents = await read_profile_image_upload(file)
     try:
-        stored_path = await run_in_threadpool(store_student_profile_image, bytes(contents), student_id)
+        stored_path = await run_in_threadpool(store_student_profile_image, contents, student_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     old_path = student.profile_image

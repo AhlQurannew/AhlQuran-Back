@@ -9,6 +9,8 @@ from .student import studentRouter
 from .lectures import lectureRouter
 from .guardian import guardianRouter
 from .messages import messageRouter
+from .notes import notesRouter
+from .site import siteRouter
 from .ws_messages import ws_router
 
 def register_routes(app):
@@ -22,6 +24,8 @@ def register_routes(app):
         (lectureRouter, "/lectures", ["Lectures"]),
         (guardianRouter, "/guardians", ["Guardians"]),
         (messageRouter, "/messages", ["Messages"]),
+        (notesRouter, "/notes", ["Teacher notes"]),
+        (siteRouter, "/site", ["Site"]),
     ]
 
     for router, prefix, tags in routes:

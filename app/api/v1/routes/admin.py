@@ -701,6 +701,66 @@ async def get_admin_statistics(
     }
 
 
+@adminRouter.get("/statistics/platform")
+async def get_platform_statistics(
+    db: AsyncSession = Depends(get_db),
+    admin = Depends(require_admin)
+):
+    """
+    ADMIN ONLY: Platform-wide indicators for the admin dashboard (people, activity, engagement).
+    """
+    from datetime import date, timedelta, timezone
+    from app.models.acheivements import Achievement
+    from app.models.attendance import Attendance, AttendanceStatus
+    from app.models.guardian import Guardian
+    from app.models.lecture import Lecture
+    from app.models.message import Message
+    from app.models.student import Student
+    from app.models.teacher import Teacher
+
+    now = datetime.now(timezone.utc)
+    month_ago = now - timedelta(days=30)
+    week_ago = now - timedelta(days=7)
+
+    async def count(statement) -> int:
+        return int(await db.scalar(statement) or 0)
+
+    role_counts = dict((await db.execute(
+        select(User.role, func.count(User.id)).group_by(User.role)
+    )).all())
+    attendance_rows = dict((await db.execute(
+        select(Attendance.status, func.count(Attendance.id))
+        .where(Attendance.date >= date.today() - timedelta(days=30))
+        .group_by(Attendance.status)
+    )).all())
+    attended = attendance_rows.get(AttendanceStatus.PRESENT, 0) + attendance_rows.get(AttendanceStatus.LATE, 0)
+    attendance_total = sum(attendance_rows.values())
+
+    top_school = (await db.execute(
+        select(President.school_name, func.count(Achievement.id).label("achievements"))
+        .join(Achievement, Achievement.president_id == President.id)
+        .where(Achievement.created_at >= month_ago)
+        .group_by(President.school_name)
+        .order_by(func.count(Achievement.id).desc())
+        .limit(1)
+    )).first()
+
+    return {
+        "students": await count(select(func.count(Student.id))),
+        "teachers": await count(select(func.count(Teacher.id))),
+        "supervisors": role_counts.get(UserRoleEnum.SUPERVISOR, 0) + role_counts.get(UserRoleEnum.CHIEF_SUPERVISOR, 0),
+        "guardians": await count(select(func.count(Guardian.id))),
+        "lectures": await count(select(func.count(Lecture.id))),
+        "inactive_accounts": await count(select(func.count(User.id)).where(User.is_active == False)),
+        "new_schools_30d": await count(select(func.count(President.id)).where(President.created_at >= month_ago)),
+        "achievements_30d": await count(select(func.count(Achievement.id)).where(Achievement.created_at >= month_ago)),
+        "messages_7d": await count(select(func.count(Message.id)).where(Message.created_at >= week_ago)),
+        "attendance_rate_30d": round(attended * 100 / attendance_total, 1) if attendance_total else None,
+        "attendance_records_30d": attendance_total,
+        "most_active_school": {"name": top_school[0], "achievements": top_school[1]} if top_school else None,
+    }
+
+
 @adminRouter.get("/statistics/schools")
 async def get_schools_statistics(
     db: AsyncSession = Depends(get_db),

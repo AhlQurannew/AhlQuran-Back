@@ -2,7 +2,9 @@ import logging
 from datetime import timedelta
 from zoneinfo import available_timezones
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -30,6 +32,12 @@ from app.models.supervisor import Supervisor
 from app.models.teacher import Teacher
 from app.models.user import User, UserRoleEnum
 from app.schemas.admin_settings import AdminContactEmailUpdate
+from app.services.profile_images import (
+    read_profile_image_upload,
+    remove_profile_image,
+    resolve_profile_image,
+    store_account_profile_image,
+)
 from app.schemas.auth import (
     AdminLoginReq,
     LoginRequest,
@@ -850,6 +858,7 @@ async def get_account_settings(
             "timezone": preference.timezone if preference else "Africa/Algiers",
             "reduce_motion": preference.reduce_motion if preference else False,
         },
+        "has_photo": bool(preference and preference.profile_image),
     }
 
 
@@ -971,6 +980,65 @@ async def update_account_preferences(
         setattr(preference, field, value)
     await db.commit()
     return {"timezone": preference.timezone, "reduce_motion": preference.reduce_motion}
+
+
+def _photo_owner(account: User | Admin) -> str:
+    return f"admin-{account.id}" if isinstance(account, Admin) else f"user-{account.id}"
+
+
+@authRouter.get("/settings/photo")
+async def get_account_photo(
+    account=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    preference = await _get_account_preferences(db, account)
+    image_path = resolve_profile_image(preference.profile_image if preference else None)
+    if image_path is None:
+        raise HTTPException(status_code=404, detail="Account has no profile image")
+    return FileResponse(image_path, media_type="image/webp", headers={"Cache-Control": "private, no-store"})
+
+
+@authRouter.post("/settings/photo")
+async def upload_account_photo(
+    file: UploadFile = File(...),
+    account=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload or replace the signed-in account's avatar (any role, including admins)."""
+    contents = await read_profile_image_upload(file)
+    try:
+        stored_path = await run_in_threadpool(store_account_profile_image, contents, _photo_owner(account))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    preference = await _get_account_preferences(db, account)
+    if preference is None:
+        preference = AccountPreference(user_id=account.id) if isinstance(account, User) else AccountPreference(admin_id=account.id)
+        db.add(preference)
+    old_path = preference.profile_image
+    preference.profile_image = stored_path
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        await run_in_threadpool(remove_profile_image, stored_path)
+        raise
+    await run_in_threadpool(remove_profile_image, old_path)
+    return {"has_photo": True}
+
+
+@authRouter.delete("/settings/photo", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_account_photo(
+    account=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    preference = await _get_account_preferences(db, account)
+    if preference is None or not preference.profile_image:
+        return
+    old_path = preference.profile_image
+    preference.profile_image = None
+    await db.commit()
+    await run_in_threadpool(remove_profile_image, old_path)
 
 
 @authRouter.post("/settings/password")

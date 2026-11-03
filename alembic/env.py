@@ -16,6 +16,7 @@ class MigrationSettings(BaseSettings):
     DATABASE_URL: str
 
 
+from app.core.db_url import to_sync_url
 from app.db.base import Base  # Import your Base with all models
 
 # Import all models so Alembic can detect them
@@ -31,12 +32,7 @@ from app.models.teacher_attendance import TeacherAttendance
 config = context.config
 
 # Convert async database URL to sync for Alembic
-database_url = MigrationSettings().DATABASE_URL
-if database_url.startswith("postgresql+asyncpg://"):
-    database_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
-elif database_url.startswith("postgresql://"):
-    # Already sync, no change needed
-    pass
+database_url = to_sync_url(MigrationSettings().DATABASE_URL)
 
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 

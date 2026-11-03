@@ -1,0 +1,32 @@
+# Render Blueprint: New > Blueprint > pick this repo. See DEPLOYMENT.md ("Hosting on Render").
+# The database lives on Neon (Render's free Postgres expires after ~30 days).
+services:
+  - type: web
+    name: ahlquran-api
+    runtime: docker
+    plan: free
+    branch: main
+    autoDeploy: true
+    healthCheckPath: /health/ready
+    # Single free instance: migrate, make sure the admin exists, then serve on Render's $PORT.
+    dockerCommand: sh -c "alembic upgrade head && python -m app.cli.admin seed && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: UPLOAD_DIR
+        value: /app/uploads
+      - key: SECRET_KEY
+        generateValue: true
+      # Neon connection string (use the DIRECT one, not "-pooler"); pasted as Neon gives it.
+      - key: DATABASE_URL
+        sync: false
+      # JSON list, e.g. ["https://your-app.vercel.app"]
+      - key: CORS_ORIGINS
+        sync: false
+      - key: INITIAL_ADMIN_USERNAME
+        sync: false
+      # At least 12 characters in production.
+      - key: INITIAL_ADMIN_PASSWORD
+        sync: false

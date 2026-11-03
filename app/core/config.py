@@ -3,6 +3,8 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.db_url import to_async_url
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -32,6 +34,12 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     UPLOAD_DIR: str = "uploads"
 
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def normalize_database_url(cls, value: str) -> str:
+        # Accept the URL exactly as the host (e.g. Neon) provides it.
+        return to_async_url(value)
 
     @field_validator("SECRET_KEY")
     @classmethod

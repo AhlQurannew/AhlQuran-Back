@@ -47,3 +47,14 @@ docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 ```
 
 The database has no host-published port in this Compose configuration. Expose it only through an explicitly secured private network when operational access is required.
+
+## Hosting on Render (free tier, for testing)
+
+`render.yaml` describes the API as a Render Blueprint; the database is a free Neon Postgres.
+
+1. **Neon**: create a project and copy the **direct** connection string (not the `-pooler` one) exactly as Neon shows it. The app and Alembic both normalize `sslmode`/`ssl`, `channel_binding` and the driver prefix (`app/core/db_url.py`), so no editing is needed.
+2. **Render**: New → Blueprint → select this repo. Fill in `DATABASE_URL`, `CORS_ORIGINS` (e.g. `["https://your-app.vercel.app"]`), `INITIAL_ADMIN_USERNAME` and `INITIAL_ADMIN_PASSWORD` (12+ characters). `SECRET_KEY` is generated for you.
+3. Each deploy runs `alembic upgrade head`, the idempotent admin seed, then starts the server on Render's `$PORT`. Health check: `/health/ready`.
+4. **Frontend (Vercel)**: set `NEXT_PUBLIC_API_BASE_URL=https://<service>.onrender.com/api/v1`, then add the Vercel URL to `CORS_ORIGINS`.
+
+Free-tier limits: the service sleeps after ~15 minutes without traffic (first request takes 30–60 s; ping `/health/live` every 10 minutes to keep it awake), and local files under `UPLOAD_DIR` (profile photos, chat attachments, login slides) are lost on every restart or redeploy because there is no persistent disk.

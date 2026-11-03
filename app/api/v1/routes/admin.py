@@ -509,12 +509,13 @@ async def delete_school(
         
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"[DELETE SCHOOL] Error: {str(e)}")
+    except Exception:
+        # Full details go to the server log only; the client gets a safe, readable message.
+        logger.exception("[DELETE SCHOOL] Error deleting school_id=%s", school_id)
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error deleting school: {str(e)}"
+            detail="Could not delete the school. Please try again or contact support."
         )
 
 

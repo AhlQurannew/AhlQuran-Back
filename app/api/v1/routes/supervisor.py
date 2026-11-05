@@ -9,7 +9,7 @@ from app.schemas.supervisor import SupervisorCreate, SupervisorUpdate, Superviso
 from app.core.dependencies import (
     require_president_chief_supervisor_or_admin,
 )
-from app.core.account_lifecycle import restore_orphaned_account
+from app.core.account_lifecycle import reset_user_password, restore_orphaned_account
 from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 from app.core.security import get_password_hash
 import logging
@@ -199,7 +199,7 @@ async def update_supervisor(
     
     # Update password if provided
     if "password" in update_data and update_data["password"]:
-        supervisor.user.hashed_password = get_password_hash(update_data["password"])
+        reset_user_password(supervisor.user, update_data["password"])
 
     await db.commit()
     await db.refresh(supervisor)

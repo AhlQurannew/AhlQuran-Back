@@ -8,6 +8,21 @@ from app.core.security import get_password_hash
 from app.models.user import User, UserRoleEnum
 
 
+MAX_PASSWORD_BYTES = 72  # bcrypt ignores or rejects anything longer
+
+
+def reset_user_password(user: User, password: str) -> None:
+    """Set a new password on someone's behalf and end their existing sessions.
+
+    Bumping auth_version invalidates tokens issued with the old password, matching what
+    the self-service password change does.
+    """
+    if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        raise HTTPException(status_code=422, detail="Password must be at most 72 bytes")
+    user.hashed_password = get_password_hash(password)
+    user.auth_version += 1
+
+
 async def restore_orphaned_account(
     db: AsyncSession,
     *,

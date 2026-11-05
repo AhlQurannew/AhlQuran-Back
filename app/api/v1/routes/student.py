@@ -31,7 +31,7 @@ from app.core.dependencies import (
     require_school_management_access,
     require_teacher_or_school_manager,
 )
-from app.core.account_lifecycle import restore_orphaned_account
+from app.core.account_lifecycle import reset_user_password, restore_orphaned_account
 from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 from app.core.security import get_password_hash
 from app.core.config import settings
@@ -618,7 +618,7 @@ async def update_student_full(
     
     # Update password only if provided and different
     if student_data.accountInfo.passcode:
-        student.user.hashed_password = get_password_hash(student_data.accountInfo.passcode)
+        reset_user_password(student.user, student_data.accountInfo.passcode)
 
     # Update Student fields - Personal Info
     student.sex = student_data.personalInfo.sex

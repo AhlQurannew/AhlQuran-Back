@@ -386,8 +386,8 @@ async def update_school(
         
         # Update password if provided
         if 'password' in school_data and school_data['password']:
-            from app.core.security import get_password_hash
-            target_user.hashed_password = get_password_hash(school_data['password'])
+            from app.core.account_lifecycle import reset_user_password
+            reset_user_password(target_user, school_data['password'])
         
         await db.commit()
         await db.refresh(president)

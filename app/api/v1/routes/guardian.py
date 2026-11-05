@@ -23,7 +23,7 @@ from app.schemas.guardian_student_data import (
     StudentContext
 )
 from app.core.dependencies import require_guardian, require_school_management_access
-from app.core.account_lifecycle import restore_orphaned_account
+from app.core.account_lifecycle import reset_user_password, restore_orphaned_account
 from app.core.security import get_password_hash
 from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 from typing import Tuple, List, Optional
@@ -1132,9 +1132,7 @@ async def update_guardian(
         
         # Update password only if provided
         if guardian_data.account_info.password:
-            guardian.user.hashed_password = get_password_hash(
-                guardian_data.account_info.password
-            )
+            reset_user_password(guardian.user, guardian_data.account_info.password)
     
     await db.commit()
     logger.info(f"Guardian {guardian_id} updated by user {current_user.id}")

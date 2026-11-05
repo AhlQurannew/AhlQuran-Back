@@ -18,6 +18,7 @@ from app.schemas.statistics import (
 )
 from app.core.dependencies import require_school_management_access, require_teacher
 from app.core.account_lifecycle import restore_orphaned_account
+from app.core.account_lifecycle import reset_user_password
 from app.core.security import get_password_hash
 from app.core.quran_pages import calculate_achievement_pages
 from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
@@ -597,6 +598,11 @@ async def update_teacher(
     # Update teacher-specific fields
     if "riwaya" in update_data:
         teacher.riwaya = update_data["riwaya"]
+
+    # Password reset by a manager (the field was previously accepted but ignored)
+    if update_data.get("password"):
+        reset_user_password(teacher.user, update_data["password"])
+        logger.info(f"Password reset for teacher {teacher_id} by user {current_user.id}")
 
     await db.commit()
     await db.refresh(teacher)

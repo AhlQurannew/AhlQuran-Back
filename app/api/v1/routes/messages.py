@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.v1.routes.ws_messages import broadcast_to_group
 from app.core.config import settings
-from app.core.dependencies import get_current_user
+from app.core.dependencies import require_teacher_or_school_manager
 from app.core.multi_tenancy import get_president_id_for_user as resolve_president_id
 from app.db.session import get_db
 from app.models.account_preference import AccountPreference
@@ -121,7 +121,7 @@ async def create_message(
     message_data: MessageCreate,
     school_id: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_teacher_or_school_manager),
 ):
     """Create a compatible text-only message; sender role always comes from auth."""
     president_id = await get_president_id_for_user(current_user, db, school_id)
@@ -142,7 +142,7 @@ async def create_message_with_attachments(
     attachments: list[UploadFile] = File(default=[]),
     school_id: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_teacher_or_school_manager),
 ):
     """Create a message with up to five locally stored, content-validated files."""
     president_id = await get_president_id_for_user(current_user, db, school_id)
@@ -228,7 +228,7 @@ async def get_message_attachment(
     attachment_id: int,
     school_id: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_teacher_or_school_manager),
 ):
     """Serve a private attachment only to a user authorized for its school."""
     president_id = await get_president_id_for_user(current_user, db, school_id)
@@ -267,7 +267,7 @@ async def get_sender_photo(
     admin_sender_id: int | None = Query(None),
     school_id: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_teacher_or_school_manager),
 ):
     """Avatar of someone who posted in the caller's school chat (never of arbitrary accounts)."""
     if (sender_id is None) == (admin_sender_id is None):
@@ -292,7 +292,7 @@ async def get_messages(
     limit: int = Query(100, ge=1, le=200),
     school_id: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_teacher_or_school_manager),
 ):
     president_id = await get_president_id_for_user(current_user, db, school_id)
     result = await db.execute(
@@ -313,7 +313,7 @@ async def get_recent_messages(
     limit: int = Query(50, ge=1, le=200),
     school_id: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_teacher_or_school_manager),
 ):
     president_id = await get_president_id_for_user(current_user, db, school_id)
     result = await db.execute(
@@ -333,7 +333,7 @@ async def delete_message(
     message_id: int,
     school_id: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_teacher_or_school_manager),
 ):
     president_id = await get_president_id_for_user(current_user, db, school_id)
     result = await db.execute(

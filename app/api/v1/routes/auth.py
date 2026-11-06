@@ -630,8 +630,11 @@ async def admin_login(
 # ========== GET CURRENT USER INFO ==========
 @authRouter.get("/me")
 async def get_current_user_info(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
+    # Explicit query: a lazy relationship load is not allowed in async code (it crashed with a 500).
+    president = await db.scalar(select(President).where(President.user_id == current_user.id))
     return {
         "id": current_user.id,
         "email": current_user.email,
@@ -641,10 +644,10 @@ async def get_current_user_info(
         "is_active": current_user.is_active,
         # Include president info if available
         "president": {
-            "school_name": current_user.president.school_name,
-            "phone_number": current_user.president.phone_number,
-            "isVerified": current_user.president.is_verified
-        } if current_user.president else None
+            "school_name": president.school_name,
+            "phone_number": president.phone_number,
+            "isVerified": president.is_verified
+        } if president else None
     }
 
 

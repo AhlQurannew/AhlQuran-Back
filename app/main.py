@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.login_throttle import LoginThrottleMiddleware
 from app.db.session import engine, get_db
 from app.api.v1.routes import register_routes
 
@@ -36,11 +37,15 @@ app = FastAPI(
     default_response_class=ORJSONResponse
 )
 
+# Login brute-force protection (inner; CORS is added after so it wraps the 429 responses too)
+app.add_middleware(LoginThrottleMiddleware)
+
 # CORS Configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    allow_origin_regex=r"^https:\/\/.*\.vercel\.app$",
+    # Only this project's Vercel deployments (production + previews), not every *.vercel.app site.
+    allow_origin_regex=r"^https://ahl-el-quran[a-z0-9-]*\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

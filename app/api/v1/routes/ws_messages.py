@@ -32,6 +32,9 @@ async def get_president_id_for_user(user, db: AsyncSession, school_id: int | Non
         return None
 
 
+STAFF_ROLES = {"PRESIDENT", "CHIEF_SUPERVISOR", "SUPERVISOR", "TEACHER"}
+
+
 async def authenticate_ws_token(token: str, db: AsyncSession) -> User | Admin | None:
     """Validate the access token and reload its actual account (never trust token role for chat role)."""
     payload = decode_token(token) if token else None
@@ -107,6 +110,11 @@ async def handle_websocket_connection(websocket: WebSocket, token: str, school_i
         account = await authenticate_ws_token(token, db)
         if account is None:
             await websocket.close(code=4001, reason="Unauthorized")
+            return
+        # Same audience as the REST chat: staff only, never students or guardians.
+        role = getattr(getattr(account, "role", None), "value", None)
+        if not isinstance(account, Admin) and role not in STAFF_ROLES:
+            await websocket.close(code=4003, reason="Chat is reserved for school staff")
             return
 
         president_id = await get_president_id_for_user(account, db, school_id)

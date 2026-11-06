@@ -408,12 +408,13 @@ async def update_school(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[UPDATE SCHOOL] Error: {str(e)}")
+        logger.exception("[UPDATE SCHOOL] Unexpected error")
         await db.rollback()
+        # Internal details stay in the logs; the client only gets a generic message.
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error updating school: {str(e)}"
-        )
+            detail="Error updating school"
+        ) from e
 
 
 @adminRouter.delete("/schools/{school_id}")
@@ -648,12 +649,13 @@ async def create_school(
             detail="Email already exists"
         ) from e
     except Exception as e:
-        logger.error(f"[CREATE SCHOOL] Error: {str(e)}")
+        logger.exception("[CREATE SCHOOL] Unexpected error")
         await db.rollback()
+        # Internal details stay in the logs; the client only gets a generic message.
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error creating school: {str(e)}"
-        )
+            detail="Error creating school"
+        ) from e
 
 
 ## Statistics Endpoints

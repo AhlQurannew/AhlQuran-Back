@@ -1257,7 +1257,7 @@ async def add_student_achievement_as_teacher(
             Student.president_id == president_id
         )
     )
-    student = student_result.scalar_one_or_none()
+    student = student_result.scalars().first()  # a student may have several enrollment rows
     
     if not student:
         raise HTTPException(
@@ -1334,7 +1334,7 @@ async def get_student_achievements_as_teacher(
             Student.president_id == president_id
         )
     )
-    student = student_result.scalar_one_or_none()
+    student = student_result.scalars().first()  # a student may have several enrollment rows
     
     if not student:
         raise HTTPException(
@@ -1413,7 +1413,7 @@ async def update_student_achievement_as_teacher(
             Student.president_id == president_id
         )
     )
-    student = student_result.scalar_one_or_none()
+    student = student_result.scalars().first()  # a student may have several enrollment rows
     
     if not student:
         raise HTTPException(
@@ -1488,7 +1488,7 @@ async def delete_student_achievement_as_teacher(
             Student.president_id == president_id
         )
     )
-    student = student_result.scalar_one_or_none()
+    student = student_result.scalars().first()  # a student may have several enrollment rows
     
     if not student:
         raise HTTPException(

@@ -162,7 +162,7 @@ async def get_lecture_by_id(
             joinedload(Lecture.schedules)
         ).where(Lecture.id == lecture_id, Lecture.president_id == president_id)
     )
-    lecture = result_query.scalar_one_or_none()
+    lecture = result_query.unique().scalar_one_or_none()  # joined eager loads on collections need unique()
     
     if not lecture:
         raise HTTPException(

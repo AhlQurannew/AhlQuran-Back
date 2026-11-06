@@ -2,6 +2,7 @@
 Quran page mapping based on Medina Mushaf (604 pages).
 Maps each page to its starting [surah, verse].
 """
+from bisect import bisect_right
 from typing import Optional
 
 # Index 0 is empty to align list index with 1-based page numbers
@@ -91,24 +92,18 @@ QURAN_PAGES = [
   ]
 
 
+# Page start positions in order, for a binary search instead of a 604-step scan per call.
+_PAGE_STARTS = [tuple(page) for page in QURAN_PAGES[1:]]
+
+
 def get_page_number(surah_number: int, verse_number: int) -> Optional[int]:
     """
     Returns the physical page number (1 to 604) in the Medina Mushaf for a given surah and verse.
     """
     if surah_number < 1 or surah_number > 114 or verse_number < 1:
         return None
-        
-    for i in range(len(QURAN_PAGES) - 1, 0, -1):
-        page = QURAN_PAGES[i]
-        if not page or len(page) < 2:
-            continue
-        page_surah = page[0]
-        page_verse = page[1]
-        
-        if surah_number > page_surah or (surah_number == page_surah and verse_number >= page_verse):
-            return i
-            
-    return 1
+    # Last page whose start is at or before (surah, verse); page numbers are 1-based.
+    return max(1, bisect_right(_PAGE_STARTS, (surah_number, verse_number)))
 
 
 def calculate_achievement_pages(

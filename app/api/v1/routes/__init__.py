@@ -2,6 +2,7 @@ from app.core.config import settings
 
 from .auth import authRouter
 from .admin import adminRouter
+from .analytics import analyticsRouter
 from .president import presidentRouter
 from .supervisor import supervisorRouter
 from .teacher import teacherRouter
@@ -17,6 +18,7 @@ def register_routes(app):
     routes = [
         (authRouter, "/auth", ["Authentication"]),
         (adminRouter, "/admin", ["Admin"]),
+        (analyticsRouter, "/admin/analytics", ["Admin analytics"]),
         (presidentRouter, "/president", ["President"]),
         (supervisorRouter, "/supervisor", ["Supervisor"]),
         (teacherRouter, "/teacher", ["Teacher"]),

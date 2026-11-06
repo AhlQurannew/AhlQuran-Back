@@ -762,6 +762,98 @@ async def get_platform_statistics(
     }
 
 
+@adminRouter.get("/statistics/academics")
+async def get_academic_statistics(
+    db: AsyncSession = Depends(get_db),
+    admin = Depends(require_admin)
+):
+    """
+    ADMIN ONLY: Specialities and exams across the platform, with one row per school.
+    """
+    from datetime import date, timedelta
+    from sqlalchemy import case
+    from app.models.exam import Exam, ExamResult
+    from app.models.speciality import Speciality
+    from app.models.student import Student
+
+    today = date.today()
+    since = today - timedelta(days=90)
+    graded = (ExamResult.attendance == "present") & ExamResult.mark.is_not(None)
+    pct = ExamResult.mark * 100 / Exam.max_mark
+
+    schools = (await db.execute(select(President.id, President.school_name).order_by(President.school_name))).all()
+    spec_counts = dict((await db.execute(
+        select(Speciality.president_id, func.count(Speciality.id)).group_by(Speciality.president_id)
+    )).all())
+    students = {row[0]: (row[1], row[2]) for row in (await db.execute(
+        select(Student.president_id, func.count(Student.id), func.count(Student.speciality_id)).group_by(Student.president_id)
+    )).all()}
+    exam_counts = {row[0]: (row[1], row[2], row[3]) for row in (await db.execute(
+        select(
+            Exam.president_id,
+            func.count(Exam.id),
+            func.count(case((Exam.exam_date >= since, Exam.id))),
+            func.count(case((Exam.exam_date > today, Exam.id))),
+        ).group_by(Exam.president_id)
+    )).all()}
+    results = {row[0]: row[1:] for row in (await db.execute(
+        select(
+            Exam.president_id,
+            func.count(ExamResult.id),
+            func.count(case((ExamResult.attendance == "present", ExamResult.id))),
+            func.count(case((graded, ExamResult.id))),
+            func.avg(case((graded, pct))),
+            func.count(case((graded & (ExamResult.mark >= Exam.pass_mark), ExamResult.id))),
+        )
+        .join(ExamResult, ExamResult.exam_id == Exam.id)
+        .where(Exam.exam_date <= today)
+        .group_by(Exam.president_id)
+    )).all()}
+
+    rows = []
+    for school_id, school_name in schools:
+        total_results, present, graded_count, avg_pct, passed = results.get(school_id, (0, 0, 0, None, 0))
+        exams_total, exams_90d, upcoming = exam_counts.get(school_id, (0, 0, 0))
+        student_total, with_speciality = students.get(school_id, (0, 0))
+        rows.append({
+            "school_id": school_id,
+            "school_name": school_name,
+            "specialities": spec_counts.get(school_id, 0),
+            "students": student_total,
+            "students_with_speciality": with_speciality,
+            "speciality_coverage": round(with_speciality * 100 / student_total, 1) if student_total else None,
+            "exams": exams_total,
+            "exams_90d": exams_90d,
+            "upcoming_exams": upcoming,
+            "graded_results": graded_count,
+            "average_pct": round(float(avg_pct), 1) if avg_pct is not None else None,
+            "pass_rate": round(passed * 100 / graded_count, 1) if graded_count else None,
+            "exam_attendance_rate": round(present * 100 / total_results, 1) if total_results else None,
+        })
+
+    total_graded = sum(r["graded_results"] for r in rows)
+    total_results = sum(results.get(r["school_id"], (0,))[0] for r in rows)
+    total_present = sum(results.get(r["school_id"], (0, 0))[1] for r in rows)
+    weighted = sum((r["average_pct"] or 0) * r["graded_results"] for r in rows)
+    passed_total = sum(results.get(r["school_id"], (0, 0, 0, None, 0))[4] for r in rows)
+    total_students = sum(r["students"] for r in rows)
+    return {
+        "totals": {
+            "specialities": sum(r["specialities"] for r in rows),
+            "students_with_speciality": sum(r["students_with_speciality"] for r in rows),
+            "speciality_coverage": round(sum(r["students_with_speciality"] for r in rows) * 100 / total_students, 1) if total_students else None,
+            "exams": sum(r["exams"] for r in rows),
+            "exams_90d": sum(r["exams_90d"] for r in rows),
+            "upcoming_exams": sum(r["upcoming_exams"] for r in rows),
+            "graded_results": total_graded,
+            "average_pct": round(weighted / total_graded, 1) if total_graded else None,
+            "pass_rate": round(passed_total * 100 / total_graded, 1) if total_graded else None,
+            "exam_attendance_rate": round(total_present * 100 / total_results, 1) if total_results else None,
+        },
+        "schools": rows,
+    }
+
+
 @adminRouter.get("/statistics/schools")
 async def get_schools_statistics(
     db: AsyncSession = Depends(get_db),

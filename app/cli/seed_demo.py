@@ -3,6 +3,7 @@
     python -m app.cli.seed_demo            # create (refuses if the demo schools already exist)
     python -m app.cli.seed_demo --purge    # remove everything this script created
     python -m app.cli.seed_demo --months 18 --students 90
+    python -m app.cli.seed_demo --academics  # add specialities and exams to existing demo schools
 
 Every demo account uses the password DEMO_PASSWORD and an e-mail on DEMO_DOMAIN (guardians
 use a firstname_lastname username). The data is deterministic (fixed random seed), and each
@@ -16,18 +17,20 @@ import random
 import sys
 from datetime import date, datetime, time, timedelta, timezone
 
-from sqlalchemy import delete, insert, select
+from sqlalchemy import delete, func, insert, select
 
 from app.core.quran_pages import QURAN_PAGES
 from app.core.security import get_password_hash
 from app.db.session import SessionLocal, engine
 from app.models.acheivements import Achievement
-from app.models.attendance import Attendance
+from app.models.attendance import Attendance, AttendanceStatus
 from app.models.chief_supervisor import ChiefSupervisor
+from app.models.exam import Exam, ExamResult
 from app.models.guardian import Guardian
 from app.models.lecture import Lecture, WeeklySchedule, lecture_teachers
 from app.models.message import Message, SenderRole
 from app.models.president import President
+from app.models.speciality import Speciality, SpecialityLecture
 from app.models.sessionParticipation import SessionParticipation
 from app.models.student import Student
 from app.models.supervisor import Supervisor
@@ -35,6 +38,7 @@ from app.models.teacher import Teacher
 from app.models.teacher_attendance import TeacherAttendance
 from app.models.teacher_note import TeacherNote
 from app.models.user import User, UserRoleEnum
+from app.services.specialities import set_student_lectures
 from app.services.usernames import base_username
 
 DEMO_DOMAIN = "demo.ahlquran.dz"
@@ -76,6 +80,14 @@ CHAT = [
     "مبارك للطلاب الذين أتموا حفظ جزء عمّ هذا الشهر.",
     "سيكون هناك اختبار شهري للتجويد الأسبوع القادم.",
 ]
+# Specialities: (name, is_common, [(circle index, coefficient)]) — each circle belongs to one speciality
+DEMO_SPECIALITIES = [
+    ("الجذع المشترك", True, [(0, 2), (1, 1.5)]),
+    ("الفقه والعلوم الشرعية", False, [(2, 3), (3, 1)]),
+    ("التلاوة والتجويد", False, [(4, 2.5), (5, 1.5)]),
+]
+EXAM_GOOD = ["حفظ متقن وأداء ممتاز", "تجويد سليم، واصل", "مراجعة قوية ومخارج حروف واضحة", "تحسن ملحوظ هذا الشهر"]
+EXAM_WEAK = ["يحتاج إلى مراجعة المحفوظ", "أخطاء في أحكام المد", "تردد في الحفظ، يُنصح بالتكرار", "ضعف في المراجعة"]
 
 
 def pick(rng, items):
@@ -159,6 +171,7 @@ class Seeder:
             await self.school(index, school)
             await self.s.commit()
             print(f"  {school['name']}: done", flush=True)
+        self.stats.update(await seed_academics(self.s))
         return self.stats
 
     async def school(self, index: int, cfg: dict) -> None:
@@ -363,6 +376,121 @@ class Seeder:
         self.stats["messages"] += len(rows)
 
 
+async def seed_academics(s) -> dict:
+    """Specialities (with circle coefficients) and about a year of exams for each demo school without exams.
+
+    Marks follow each student's attendance rate so the rankings are plausible; the latest exam of
+    the first circle keeps a few marks pending and every circle has one upcoming exam.
+    """
+    rng = random.Random(SEED + 17)
+    today = date.today()
+    stats = {"specialities": 0, "exams": 0, "exam_results": 0}
+    names = [school["name"] for school in SCHOOLS]
+    schools = list((await s.execute(
+        select(President.id).where(President.school_name.in_(names)).order_by(President.id))).scalars())
+    for president_id in schools:
+        if await s.scalar(select(Exam.id).where(Exam.president_id == president_id).limit(1)):
+            continue
+        lectures = list((await s.execute(
+            select(Lecture).where(Lecture.president_id == president_id).order_by(Lecture.id))).scalars())
+        if len(lectures) < 6:
+            continue
+        lecture_ids = [lecture.id for lecture in lectures]
+        teacher_user = dict((await s.execute(
+            select(lecture_teachers.c.lecture_id, Teacher.user_id)
+            .join(Teacher, Teacher.id == lecture_teachers.c.teacher_id)
+            .where(lecture_teachers.c.lecture_id.in_(lecture_ids))
+        )).all())
+
+        # Specialities: the students of a circle join its speciality (and so its other circle)
+        if not await s.scalar(select(Speciality.id).where(Speciality.president_id == president_id).limit(1)):
+            for name, common, circles in DEMO_SPECIALITIES:
+                spec = Speciality(
+                    president_id=president_id, name=name, is_common=common,
+                    description="الحلقات الأساسية لجميع الطلاب" if common else "تخصص تجريبي",
+                    lectures=[SpecialityLecture(lecture_id=lectures[i].id, coefficient=c) for i, c in circles],
+                )
+                s.add(spec)
+                await s.flush()
+                stats["specialities"] += 1
+                circle_ids = [lectures[i].id for i, _ in circles]
+                members = list((await s.execute(
+                    select(SessionParticipation.student_id)
+                    .where(SessionParticipation.lecture_id.in_(circle_ids), SessionParticipation.session_id.is_(None))
+                    .distinct()
+                )).scalars())
+                for student_id in members:
+                    if rng.random() < 0.85:  # a few students stay without a speciality
+                        await s.execute(Student.__table__.update().where(Student.id == student_id).values(speciality_id=spec.id))
+                        await set_student_lectures(s, student_id, circle_ids)
+            await s.flush()
+
+        # Ability per student from their attendance rate
+        rates = {
+            sid: present / total
+            for sid, present, total in (await s.execute(
+                select(Attendance.student_id,
+                       func.count().filter(Attendance.status.in_([AttendanceStatus.PRESENT, AttendanceStatus.LATE])),
+                       func.count())
+                .where(Attendance.president_id == president_id).group_by(Attendance.student_id)
+            )).all() if total
+        }
+        enrolled: dict[int, list] = {}
+        for lecture_id, student_id, joined in (await s.execute(
+            select(SessionParticipation.lecture_id, Student.id, Student.enrollment_date)
+            .join(Student, Student.id == SessionParticipation.student_id)
+            .where(SessionParticipation.lecture_id.in_(lecture_ids), SessionParticipation.session_id.is_(None))
+            .order_by(Student.id)
+        )).all():
+            enrolled.setdefault(lecture_id, []).append((student_id, joined.date() if joined else None))
+        ability = {sid: min(0.97, max(0.2, 0.2 + 0.55 * rates.get(sid, 0.75) + rng.gauss(0, 0.12)))
+                   for members in enrolled.values() for sid, _ in members}
+
+        for index, lecture in enumerate(lectures):
+            plans = []
+            for months_ago in range(12, 0, -2):  # a monthly exam every two months over the last year
+                day = today - timedelta(days=months_ago * 30 + rng.randrange(0, 6))
+                plans.append(("monthly", f"الامتحان الشهري — {day.strftime('%m/%Y')}", day))
+            for months_ago, kind, title in ((11, "term", "امتحان الفصل الأول"), (7, "term", "امتحان الفصل الثاني"),
+                                            (3, "tajwid", "امتحان التجويد")):
+                plans.append((kind, title, today - timedelta(days=months_ago * 30 - rng.randrange(0, 6))))
+            plans.append(("monthly", "الامتحان الشهري القادم", today + timedelta(days=7 + index * 2)))
+            plans.sort(key=lambda item: item[2])
+            last_past = max(i for i, plan in enumerate(plans) if plan[2] <= today)
+            for i, (kind, title, day) in enumerate(plans):
+                exam = Exam(president_id=president_id, lecture_id=lecture.id, title=title, exam_type=kind, exam_date=day,
+                            max_mark=20, pass_mark=10, created_by_id=teacher_user.get(lecture.id),
+                            notes=pick(rng, ["سورة البقرة", "جزء عمّ", "حزب سبّح", "أحكام النون الساكنة", "مراجعة عامة", None]))
+                s.add(exam)
+                await s.flush()
+                stats["exams"] += 1
+                rows = []
+                for student_id, joined in enrolled.get(lecture.id, []):
+                    if day > today:  # upcoming: the circle's roster, nothing recorded yet (as the app creates it)
+                        rows.append({"exam_id": exam.id, "student_id": student_id, "attendance": "present",
+                                     "mark": None, "notes": None})
+                        continue
+                    if joined and joined > day:
+                        continue
+                    roll = rng.random()
+                    attendance = "absent" if roll < 0.07 else "excused" if roll < 0.11 else "present"
+                    mark = None
+                    pending = i == last_past and index == 0 and rng.random() < 0.25
+                    if attendance == "present" and not pending:
+                        level = ability[student_id] + (0.04 if kind == "tajwid" else 0) + rng.gauss(0, 0.07)
+                        mark = round(min(20, max(2, level * 20)) * 4) / 4
+                    note = None
+                    if mark is not None and rng.random() < 0.35:
+                        note = pick(rng, EXAM_GOOD if mark >= 14 else EXAM_WEAK if mark < 10 else EXAM_GOOD + EXAM_WEAK)
+                    rows.append({"exam_id": exam.id, "student_id": student_id, "attendance": attendance,
+                                 "mark": mark, "notes": note})
+                if rows:
+                    await s.execute(insert(ExamResult), rows)
+                    stats["exam_results"] += len(rows)
+        await s.commit()
+    return stats
+
+
 async def purge() -> None:
     names = [school["name"] for school in SCHOOLS]
     async with SessionLocal() as s:
@@ -385,10 +513,16 @@ async def main() -> int:
     parser.add_argument("--purge", action="store_true", help="remove the demo data")
     parser.add_argument("--months", type=int, default=18)
     parser.add_argument("--students", type=int, default=90, help="students per school")
+    parser.add_argument("--academics", action="store_true", help="add specialities and exams to the existing demo schools")
     args = parser.parse_args()
     try:
         if args.purge:
             await purge()
+            return 0
+        if args.academics:
+            async with SessionLocal() as session:
+                stats = await seed_academics(session)
+            print("Created:", ", ".join(f"{k}={v}" for k, v in stats.items()))
             return 0
         async with SessionLocal() as session:
             seeder = Seeder(session, args.months, args.students)

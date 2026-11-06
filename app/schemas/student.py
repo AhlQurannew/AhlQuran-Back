@@ -56,6 +56,7 @@ class SchoolInfo(BaseModel):
     registrationNumber: Optional[str] = None
     enrollmentType: Optional[str] = None  # "internal" | "external"
     startYear: Optional[int] = None
+    specialityId: Optional[int] = None
 
 
 class SubscriptionInfo(BaseModel):

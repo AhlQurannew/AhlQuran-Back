@@ -36,6 +36,7 @@ from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_i
 from app.core.security import get_password_hash
 from app.core.config import settings
 from app.services import registration_numbers as regnum
+from app.services.specialities import set_student_lectures, speciality_lecture_ids
 from app.services.profile_images import (
     read_profile_image_upload,
     remove_student_profile_image,
@@ -204,6 +205,7 @@ def map_student_to_response(student: Student) -> StudentResponse:
         registrationNumber=student.registration_number,
         enrollmentType=student.enrollment_type,
         startYear=student.start_year,
+        specialityId=student.speciality_id,
     )
 
     # Subscription Info (Placeholder)
@@ -265,6 +267,15 @@ async def _get_photo_student(student_id: int, db: AsyncSession, current_user, sc
     return student
 
 
+async def _resolve_lecture_ids(db: AsyncSession, student_data: StudentCreateFull, president_id: int) -> list[int]:
+    """The speciality's circles when a speciality is chosen, otherwise the explicit lecture list."""
+    if student_data.schoolInfo.speciality_id is not None:
+        return await speciality_lecture_ids(db, student_data.schoolInfo.speciality_id, president_id)
+    ids = [lecture.lecture_id for lecture in student_data.lectures]
+    await _validate_lecture_links(db, ids, president_id)
+    return ids
+
+
 @studentRouter.get("/next-registration-number")
 async def next_student_registration_number(
     db: AsyncSession = Depends(get_db),
@@ -307,9 +318,7 @@ async def create_student(
     guardian = await _validate_guardian_link(
         db, student_data.guardian.guardian_id, president_id
     )
-    await _validate_lecture_links(
-        db, [lecture.lecture_id for lecture in student_data.lectures], president_id
-    )
+    lecture_ids = await _resolve_lecture_ids(db, student_data, president_id)
 
     student_email = student_data.contactInfo.email
     if not student_email:
@@ -381,21 +390,14 @@ async def create_student(
         enrollment_type=student_data.schoolInfo.enrollment_type,
         start_year=student_data.schoolInfo.start_year or date.today().year,
         medical_condition=(student_data.medicalInfo.medical_condition or "").strip() or None,
+        speciality_id=student_data.schoolInfo.speciality_id,
     )
 
     db.add(new_student)
     await db.flush() # Flush to get student ID
 
-    # Handle Lectures (Session Participation)
-    if student_data.lectures:
-        for lecture in student_data.lectures:
-            participation = SessionParticipation(
-                student_id=new_student.id,
-                session_id=None,  # Will be set when actual sessions are created
-                lecture_id=lecture.lecture_id,
-                # Add other fields if needed, e.g. join_date
-            )
-            db.add(participation)
+    # Circle enrollments (from the speciality when one is chosen)
+    await set_student_lectures(db, new_student.id, lecture_ids)
 
     await db.commit()
     
@@ -619,9 +621,7 @@ async def update_student_full(
     guardian = await _validate_guardian_link(
         db, student_data.guardian.guardian_id, president_id
     )
-    await _validate_lecture_links(
-        db, [lecture.lecture_id for lecture in student_data.lectures], president_id
-    )
+    lecture_ids = await _resolve_lecture_ids(db, student_data, president_id)
 
     # Check if email is being changed and if new email is already taken by another user
     if student_data.contactInfo.email != student.user.email:
@@ -689,23 +689,9 @@ async def update_student_full(
     student.start_year = student_data.schoolInfo.start_year
     student.medical_condition = (student_data.medicalInfo.medical_condition or "").strip() or None
 
-    # Update Lectures (Session Participations)
-    # Remove existing participations
-    await db.execute(
-        SessionParticipation.__table__.delete().where(
-            SessionParticipation.student_id == student_id
-        )
-    )
-    
-    # Add new participations
-    if student_data.lectures:
-        for lecture in student_data.lectures:
-            participation = SessionParticipation(
-                student_id=student_id,
-                session_id=None,  # Will be set when actual sessions are created
-                lecture_id=lecture.lecture_id,
-            )
-            db.add(participation)
+    # Speciality and circle enrollments (session-level participation rows are kept)
+    student.speciality_id = student_data.schoolInfo.speciality_id
+    await set_student_lectures(db, student_id, lecture_ids)
 
     await db.commit()
     
@@ -718,6 +704,8 @@ async def update_student_full(
         )
         .where(Student.id == student_id)
         .where(Student.president_id == president_id)
+        # The session keeps objects after commit; refresh the circle list we just changed.
+        .execution_options(populate_existing=True)
     )
     updated_student = result.scalar_one()
 

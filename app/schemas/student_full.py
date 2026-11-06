@@ -65,6 +65,8 @@ class SchoolInfo(BaseModel):
     registration_number: Optional[str] = Field(None, alias="registrationNumber", max_length=30)
     enrollment_type: Optional[Literal["internal", "external"]] = Field(None, alias="enrollmentType")
     start_year: Optional[int] = Field(None, alias="startYear", ge=1950, le=2100)
+    # When set, the student is enrolled in all of the speciality's circles (lectures[] is ignored).
+    speciality_id: Optional[int] = Field(None, alias="specialityId")
 
 
 class MedicalInfoIn(BaseModel):

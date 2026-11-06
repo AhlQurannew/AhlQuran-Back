@@ -56,6 +56,12 @@ class Student(Base):
     enrollment_type: Mapped[Optional[str]] = mapped_column(String(20))  # "internal" | "external" (khariji)
     start_year: Mapped[Optional[int]] = mapped_column(Integer)
     medical_condition: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Speciality (تخصص): the student is enrolled in all of its circles
+    speciality_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("specialities.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    speciality: Mapped[Optional["Speciality"]] = relationship("Speciality", foreign_keys=[speciality_id])
     
     guardian_id: Mapped[Optional[int]] = mapped_column(
         Integer,

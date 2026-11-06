@@ -19,6 +19,7 @@ from app.models.teacher_attendance import TeacherAttendance
 from app.models.account_preference import AccountPreference
 from app.models.login_slide import LoginSlide
 from app.models.teacher_note import TeacherNote
+from app.models.speciality import Speciality, SpecialityLecture
 
 __all__ = [
     "User",

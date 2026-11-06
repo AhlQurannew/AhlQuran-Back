@@ -127,6 +127,7 @@ class Seeder:
         self.emails: set[str] = set()
         self.usernames: set[str] = set()
         self.counters = {"S": 0, "T": 0}
+        self.taken_numbers: set[str] = set()
         self.stats = {k: 0 for k in ("schools", "supervisors", "teachers", "lectures", "students", "guardians",
                                      "attendance", "achievements", "teacher_attendance", "messages", "notes")}
 
@@ -149,8 +150,13 @@ class Seeder:
         return candidate
 
     def number(self, prefix: str, year: int) -> str:
-        self.counters[prefix] += 1
-        return f"{prefix}{year}-{self.counters[prefix]:04d}"
+        """Next free registration number; skips the ones real accounts already use."""
+        while True:
+            self.counters[prefix] += 1
+            candidate = f"{prefix}{year}-{self.counters[prefix]:04d}"
+            if candidate not in self.taken_numbers:
+                self.taken_numbers.add(candidate)
+                return candidate
 
     async def user(self, first, last, email, role, created_at=None, active=True) -> User:
         user = User(firstname=first, lastname=last, email=email, hashed_password=self.hash, role=role, is_active=active)
@@ -167,6 +173,13 @@ class Seeder:
         existing = (await self.s.execute(select(President.id).where(President.school_name.in_(names)))).first()
         if existing:
             raise SystemExit("Demo schools already exist. Run with --purge first.")
+        # The database may already hold real accounts: never reuse their identifiers.
+        for model in (Student, Teacher):
+            self.taken_numbers |= set((await self.s.execute(
+                select(model.registration_number).where(model.registration_number.is_not(None)))).scalars())
+        existing_logins = set((await self.s.execute(select(User.email))).scalars())
+        self.emails |= existing_logins
+        self.usernames |= existing_logins
         for index, school in enumerate(SCHOOLS):
             await self.school(index, school)
             await self.s.commit()

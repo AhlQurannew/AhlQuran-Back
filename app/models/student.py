@@ -1,4 +1,4 @@
-from sqlalchemy import String, Integer, ForeignKey, DateTime, Boolean
+from sqlalchemy import String, Integer, ForeignKey, DateTime, Boolean, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime, timezone
 from typing import Optional, List
@@ -50,6 +50,12 @@ class Student(Base):
     grade: Mapped[Optional[str]] = mapped_column(String(50))
     school_name: Mapped[Optional[str]] = mapped_column(String(100))
     profile_image: Mapped[Optional[str]] = mapped_column(String(255))
+
+    # School record: unique ID (auto-generated, editable), schooling mode and start year
+    registration_number: Mapped[Optional[str]] = mapped_column(String(30), unique=True)
+    enrollment_type: Mapped[Optional[str]] = mapped_column(String(20))  # "internal" | "external" (khariji)
+    start_year: Mapped[Optional[int]] = mapped_column(Integer)
+    medical_condition: Mapped[Optional[str]] = mapped_column(Text)
     
     guardian_id: Mapped[Optional[int]] = mapped_column(
         Integer,

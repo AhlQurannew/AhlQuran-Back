@@ -1,4 +1,4 @@
-from sqlalchemy import String, Integer, ForeignKey, DateTime
+from sqlalchemy import String, Integer, ForeignKey, DateTime, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime, timezone
 from typing import Optional
@@ -26,6 +26,15 @@ class Teacher(Base):
     riwaya: Mapped[str] = mapped_column(String(100), nullable=False)
     hire_date: Mapped[datetime] = mapped_column(DateTime(timezone=True) , default=lambda: datetime.now(timezone.utc))
     created_by_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    # Profile: unique ID (auto-generated, editable), speciality, birth and contact details
+    registration_number: Mapped[Optional[str]] = mapped_column(String(30), unique=True)
+    speciality: Mapped[Optional[str]] = mapped_column(String(150))
+    date_of_birth: Mapped[Optional[str]] = mapped_column(String(20))
+    place_of_birth: Mapped[Optional[str]] = mapped_column(String(100))
+    phone_number: Mapped[Optional[str]] = mapped_column(String(20))
+    address: Mapped[Optional[str]] = mapped_column(String(255))
+    medical_condition: Mapped[Optional[str]] = mapped_column(Text)
     
     # Relationships - USE STRING REFERENCES with foreign_keys
     user: Mapped["User"] = relationship(

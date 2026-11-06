@@ -19,6 +19,7 @@ from app.schemas.statistics import (
 from app.core.dependencies import require_school_management_access, require_teacher
 from app.core.account_lifecycle import restore_orphaned_account
 from app.core.account_lifecycle import reset_user_password
+from app.services import registration_numbers as regnum
 from app.core.security import get_password_hash
 from app.core.quran_pages import calculate_achievement_pages
 from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
@@ -409,6 +410,28 @@ async def create_teacher_session():
 # ==================== ADMIN TEACHER MANAGEMENT ====================
 # These routes require president/supervisor privileges
 
+TEACHER_PROFILE_FIELDS = ("speciality", "date_of_birth", "place_of_birth", "phone_number", "address", "medical_condition")
+
+
+def _teacher_profile(teacher: Teacher) -> dict:
+    """Profile fields added to every TeacherResponse built in this module."""
+    return {"registration_number": teacher.registration_number,
+            **{field: getattr(teacher, field) for field in TEACHER_PROFILE_FIELDS}}
+
+
+def _clean(value: str | None) -> str | None:
+    return (value or "").strip() or None
+
+
+@teacherRouter.get("/next-registration-number")
+async def next_teacher_registration_number(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_school_management_access),
+):
+    """Suggest the next free teacher ID (the form pre-fills it; it stays editable)."""
+    return {"registration_number": await regnum.suggest(db, Teacher, regnum.TEACHER_PREFIX)}
+
+
 @teacherRouter.post("/", response_model=TeacherResponse, status_code=status.HTTP_201_CREATED)
 async def create_teacher(
     teacher_data: TeacherCreate,
@@ -448,7 +471,9 @@ async def create_teacher(
         user_id=new_user.id,
         president_id=president_id,
         riwaya=teacher_data.riwaya,
-        created_by_id=await get_creator_user_id(current_user, president_id, db)
+        created_by_id=await get_creator_user_id(current_user, president_id, db),
+        registration_number=await regnum.resolve(db, Teacher, regnum.TEACHER_PREFIX, teacher_data.registration_number),
+        **{field: _clean(getattr(teacher_data, field)) for field in TEACHER_PROFILE_FIELDS},
     )
 
     db.add(new_teacher)
@@ -466,7 +491,8 @@ async def create_teacher(
         email=new_user.email,
         riwaya=new_teacher.riwaya,
         hire_date=new_teacher.hire_date,
-        is_active=new_user.is_active
+        is_active=new_user.is_active,
+        **_teacher_profile(new_teacher),
     )
 
 
@@ -507,7 +533,8 @@ async def list_teachers(
             email=teacher.user.email,
             riwaya=teacher.riwaya,
             hire_date=teacher.hire_date,
-            is_active=teacher.user.is_active
+            is_active=teacher.user.is_active,
+            **_teacher_profile(teacher),
         )
         for teacher in teachers
     ]
@@ -548,7 +575,8 @@ async def get_teacher(
         email=teacher.user.email,
         riwaya=teacher.riwaya,
         hire_date=teacher.hire_date,
-        is_active=teacher.user.is_active
+        is_active=teacher.user.is_active,
+        **_teacher_profile(teacher),
     )
 
 
@@ -599,6 +627,17 @@ async def update_teacher(
     if "riwaya" in update_data:
         teacher.riwaya = update_data["riwaya"]
 
+    # Profile fields; an empty registration number keeps the current one
+    if "registration_number" in update_data:
+        teacher.registration_number = await regnum.resolve(
+            db, Teacher, regnum.TEACHER_PREFIX,
+            update_data["registration_number"] or teacher.registration_number,
+            exclude_id=teacher.id,
+        )
+    for field in TEACHER_PROFILE_FIELDS:
+        if field in update_data:
+            setattr(teacher, field, _clean(update_data[field]))
+
     # Password reset by a manager (the field was previously accepted but ignored)
     if update_data.get("password"):
         reset_user_password(teacher.user, update_data["password"])
@@ -618,7 +657,8 @@ async def update_teacher(
         email=teacher.user.email,
         riwaya=teacher.riwaya,
         hire_date=teacher.hire_date,
-        is_active=teacher.user.is_active
+        is_active=teacher.user.is_active,
+        **_teacher_profile(teacher),
     )
 
 

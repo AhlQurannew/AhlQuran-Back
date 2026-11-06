@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
-from typing import Optional, List, Any
+from typing import Literal, Optional, List, Any
 from datetime import date
 
 class PersonalInfo(BaseModel):
@@ -58,6 +58,21 @@ class FormalEducationInfo(BaseModel):
     grade: Optional[str] = None
     school_name: Optional[str] = Field(None, alias="schoolName")
 
+class SchoolInfo(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    # Empty -> generated server-side (S<year>-0001); otherwise must be unique.
+    registration_number: Optional[str] = Field(None, alias="registrationNumber", max_length=30)
+    enrollment_type: Optional[Literal["internal", "external"]] = Field(None, alias="enrollmentType")
+    start_year: Optional[int] = Field(None, alias="startYear", ge=1950, le=2100)
+
+
+class MedicalInfoIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    medical_condition: Optional[str] = Field(None, alias="medicalCondition", max_length=2000)
+
+
 class StudentCreateFull(BaseModel):
     personalInfo: PersonalInfo
     accountInfo: AccountInfo
@@ -65,4 +80,6 @@ class StudentCreateFull(BaseModel):
     guardian: GuardianInfo
     lectures: List[LectureInfo] = []
     formalEducationInfo: FormalEducationInfo
+    schoolInfo: SchoolInfo = Field(default_factory=SchoolInfo)
+    medicalInfo: MedicalInfoIn = Field(default_factory=MedicalInfoIn)
 

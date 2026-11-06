@@ -9,6 +9,12 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
+
+class IdentifierLoginRequest(BaseModel):
+    """Guardian login: the identifier is an email or a generated username (firstname_lastname)."""
+    email: str = Field(..., min_length=1, max_length=255)
+    password: str
+
 # this is for the president registration
 class RegisterRequest(BaseModel):
     firstname: str = Field(..., min_length=2, max_length=50)

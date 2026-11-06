@@ -21,7 +21,7 @@ from app.models.sessionParticipation import SessionParticipation
 from app.schemas.student import (
     StudentCreate, StudentUpdate, StudentResponse, StudentList,
     PersonalInfo, AccountInfo, ContactInfo, GuardianInfo, 
-    LectureInfo, FormalEducationInfo, MedicalInfo, SubscriptionInfo
+    LectureInfo, FormalEducationInfo, MedicalInfo, SubscriptionInfo, SchoolInfo
 )
 from app.schemas.achievement import AchievementCreate, AchievementBulkCreate, AchievementUpdate, AchievementResponse, AchievementList
 from app.schemas.attendance import AttendanceCreate, AttendanceUpdate, AttendanceResponse, AttendanceList, AttendanceBulkSave
@@ -35,6 +35,7 @@ from app.core.account_lifecycle import reset_user_password, restore_orphaned_acc
 from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 from app.core.security import get_password_hash
 from app.core.config import settings
+from app.services import registration_numbers as regnum
 from app.services.profile_images import (
     read_profile_image_upload,
     remove_student_profile_image,
@@ -196,8 +197,13 @@ def map_student_to_response(student: Student) -> StudentResponse:
 
     # Medical Info (Placeholder)
     medical_info = MedicalInfo(
-        medicalCondition=None,
+        medicalCondition=student.medical_condition,
         notes=None
+    )
+    school_info = SchoolInfo(
+        registrationNumber=student.registration_number,
+        enrollmentType=student.enrollment_type,
+        startYear=student.start_year,
     )
 
     # Subscription Info (Placeholder)
@@ -218,6 +224,7 @@ def map_student_to_response(student: Student) -> StudentResponse:
         formalEducationInfo=education_info,
         medicalInfo=medical_info,
         subscriptionInfo=subscription_info,
+        schoolInfo=school_info,
         
         # Legacy flat fields
         firstname=student.user.firstname,
@@ -256,6 +263,15 @@ async def _get_photo_student(student_id: int, db: AsyncSession, current_user, sc
     if student.president_id != president_id:
         raise HTTPException(status_code=404, detail="Student not found")
     return student
+
+
+@studentRouter.get("/next-registration-number")
+async def next_student_registration_number(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_school_management_access),
+):
+    """Suggest the next free student ID (the form pre-fills it; it stays editable)."""
+    return {"registration_number": await regnum.suggest(db, Student, regnum.STUDENT_PREFIX)}
 
 
 @studentRouter.get("/{student_id}/photo")
@@ -327,6 +343,9 @@ async def create_student(
         f"{student_data.guardian.first_name or ''} {student_data.guardian.last_name or ''}".strip()
     )
     
+    registration_number = await regnum.resolve(
+        db, Student, regnum.STUDENT_PREFIX, student_data.schoolInfo.registration_number
+    )
     new_student = Student(
         user_id=new_user.id,
         parent_name=parent_name if parent_name else None,
@@ -355,7 +374,13 @@ async def create_student(
         grade=student_data.formalEducationInfo.grade,
         school_name=student_data.formalEducationInfo.school_name,
         
-        guardian_id=guardian.id if guardian else None
+        guardian_id=guardian.id if guardian else None,
+
+        # School record & medical info
+        registration_number=registration_number,
+        enrollment_type=student_data.schoolInfo.enrollment_type,
+        start_year=student_data.schoolInfo.start_year or date.today().year,
+        medical_condition=(student_data.medicalInfo.medical_condition or "").strip() or None,
     )
 
     db.add(new_student)
@@ -465,6 +490,7 @@ async def list_students(
             func.concat(User.firstname, " ", User.lastname).ilike(pattern),
             Student.first_name_en.ilike(pattern),
             Student.last_name_en.ilike(pattern),
+            Student.registration_number.ilike(pattern),
         )
         query = query.join(User, Student.user_id == User.id).where(search_filter)
     
@@ -652,6 +678,16 @@ async def update_student_full(
     student.academic_level = student_data.formalEducationInfo.academic_level
     student.grade = student_data.formalEducationInfo.grade
     student.school_name = student_data.formalEducationInfo.school_name
+
+    # School record: an empty ID keeps the current one (or generates one for legacy rows)
+    student.registration_number = await regnum.resolve(
+        db, Student, regnum.STUDENT_PREFIX,
+        student_data.schoolInfo.registration_number or student.registration_number,
+        exclude_id=student.id,
+    )
+    student.enrollment_type = student_data.schoolInfo.enrollment_type
+    student.start_year = student_data.schoolInfo.start_year
+    student.medical_condition = (student_data.medicalInfo.medical_condition or "").strip() or None
 
     # Update Lectures (Session Participations)
     # Remove existing participations

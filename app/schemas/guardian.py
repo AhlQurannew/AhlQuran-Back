@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional
 from datetime import datetime
 
@@ -15,16 +15,36 @@ class GuardianInfo(BaseModel):
     address: Optional[str] = None
 
 
+def _normalize_username(value: str) -> str:
+    """Login identifiers are case-insensitive: store them trimmed and lower-cased."""
+    value = (value or "").strip().lower()
+    if not value:
+        raise ValueError("Username is required")
+    if len(value) > 255 or any(c.isspace() for c in value):
+        raise ValueError("Username must not contain spaces")
+    return value
+
+
 class AccountInfo(BaseModel):
     """Account information for guardian"""
     username: str
     password: str
+
+    @field_validator("username")
+    @classmethod
+    def normalize_username(cls, value: str) -> str:
+        return _normalize_username(value)
 
 
 class AccountInfoUpdate(BaseModel):
     """Account information for guardian update (password optional)"""
     username: str
     password: Optional[str] = None
+
+    @field_validator("username")
+    @classmethod
+    def normalize_username(cls, value: str) -> str:
+        return _normalize_username(value)
 
 
 class GuardianCreate(BaseModel):

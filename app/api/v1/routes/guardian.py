@@ -23,6 +23,7 @@ from app.schemas.guardian_student_data import (
     StudentContext
 )
 from app.core.dependencies import require_guardian, require_school_management_access
+from app.services.usernames import suggest_username
 from app.core.account_lifecycle import reset_user_password, restore_orphaned_account
 from app.core.security import get_password_hash
 from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
@@ -882,6 +883,17 @@ async def get_student_attendance(
 
 # ==================== ADMIN GUARDIAN MANAGEMENT ====================
 # These routes require president/supervisor privileges
+
+
+@guardianRouter.get("/username-suggestion")
+async def guardian_username_suggestion(
+    first_name: str = Query("", max_length=100),
+    last_name: str = Query("", max_length=100),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_school_management_access),
+):
+    """Free login username built from the name: firstname_lastname (+ a number when taken)."""
+    return {"username": await suggest_username(db, first_name, last_name)}
 
 
 @guardianRouter.post("/", response_model=GuardianResponse, status_code=status.HTTP_201_CREATED)

@@ -40,6 +40,7 @@ from app.services.profile_images import (
 )
 from app.schemas.auth import (
     AdminLoginReq,
+    IdentifierLoginRequest,
     LoginRequest,
     RefreshTokenRequest,
     RefreshTokenResponse,
@@ -448,16 +449,17 @@ async def student_login(
 # ========== GUARDIAN LOGIN ==========
 @authRouter.post("/guardian/login", response_model=Token)
 async def guardian_login(
-    form_data: LoginRequest,
+    form_data: IdentifierLoginRequest,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     logger.info("Guardian login attempt")
 
     # Find user by email AND role
+    identifier = form_data.email.strip().lower()
     result = await db.execute(
         select(User).where(
-            User.email == form_data.email,
+            func.lower(User.email) == identifier,
             User.role == UserRoleEnum.GUARDIAN
         )
     )

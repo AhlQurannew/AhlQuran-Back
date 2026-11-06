@@ -52,6 +52,12 @@ class MedicalInfo(BaseModel):
     medicalCondition: Optional[str] = None
     notes: Optional[str] = None
 
+class SchoolInfo(BaseModel):
+    registrationNumber: Optional[str] = None
+    enrollmentType: Optional[str] = None  # "internal" | "external"
+    startYear: Optional[int] = None
+
+
 class SubscriptionInfo(BaseModel):
     subscriptionId: Optional[int] = None
     status: Optional[str] = None
@@ -98,6 +104,7 @@ class StudentResponse(BaseModel):
     lectures: List[LectureInfo]
     formalEducationInfo: FormalEducationInfo
     subscriptionInfo: SubscriptionInfo
+    schoolInfo: SchoolInfo = SchoolInfo()
     student: Optional[StudentRelations] = None
 
     # Legacy flat fields (optional, to avoid breaking other things if any)

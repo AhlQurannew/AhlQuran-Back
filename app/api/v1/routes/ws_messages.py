@@ -26,6 +26,9 @@ _groups: dict[int, set[WebSocket]] = defaultdict(set)
 
 
 async def get_president_id_for_user(user, db: AsyncSession, school_id: int | None = None) -> int | None:
+    """Room of the socket: a school id, or 0 for the staff room (administrator and inspectors only)."""
+    if school_id == 0:
+        return 0 if isinstance(user, Admin) else None
     try:
         return await resolve_president_id(user, db, school_id=school_id)
     except HTTPException:
@@ -166,7 +169,7 @@ async def handle_websocket_connection(websocket: WebSocket, token: str, school_i
                     result = await db.execute(
                         select(Message)
                         .options(selectinload(Message.attachments))
-                        .where(Message.id == msg_id, Message.president_id == president_id)
+                        .where(Message.id == msg_id, (Message.president_id.is_(None) if president_id == 0 else Message.president_id == president_id))
                     )
                     message = result.scalar_one_or_none()
                     if message is None:
@@ -201,7 +204,7 @@ async def handle_websocket_connection(websocket: WebSocket, token: str, school_i
                     sender_name=sender_name,
                     sender_role=role,
                     message=text,
-                    president_id=president_id,
+                    president_id=None if president_id == 0 else president_id,
                     attachments=[],
                 )
                 db.add(new_message)

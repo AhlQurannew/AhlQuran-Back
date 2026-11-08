@@ -33,8 +33,22 @@ logger = logging.getLogger(__name__)
 messageRouter = APIRouter()
 
 
+# Room 0 = the staff room of the administrator and the inspectors (messages stored without a school).
+STAFF_ROOM = 0
+
+
 async def get_president_id_for_user(current_user, db: AsyncSession, school_id: int | None = None) -> int:
+    """Chat room of the request: a school id, or STAFF_ROOM (school_id=0, admin accounts only)."""
+    if school_id == STAFF_ROOM:
+        if not isinstance(current_user, Admin):
+            raise HTTPException(status_code=403, detail="This room is reserved for the administrator and inspectors")
+        return STAFF_ROOM
     return await resolve_president_id(current_user, db, school_id=school_id)
+
+
+def in_room(room: int):
+    """SQL condition for the messages of a room (the staff room has no school)."""
+    return Message.president_id.is_(None) if room == STAFF_ROOM else Message.president_id == room
 
 
 def get_sender_role(user) -> SenderRole:
@@ -85,7 +99,7 @@ def _message_response(
         message=message.message,
         created_at=message.created_at,
         attachments=[
-            _attachment_response(item, message.president_id)
+            _attachment_response(item, STAFF_ROOM if message.president_id is None else message.president_id)
             for item in (attachments or [])
         ],
     )
@@ -114,7 +128,7 @@ def _new_message(current_user, president_id: int, text: str) -> Message:
         sender_name=_sender_name(current_user),
         sender_role=get_sender_role(current_user),
         message=text,
-        president_id=president_id,
+        president_id=None if president_id == STAFF_ROOM else president_id,
         attachments=[],
     )
 
@@ -238,7 +252,7 @@ async def get_message_attachment(
     result = await db.execute(
         select(MessageAttachment, Message)
         .join(Message, Message.id == MessageAttachment.message_id)
-        .where(MessageAttachment.id == attachment_id, Message.president_id == president_id)
+        .where(MessageAttachment.id == attachment_id, in_room(president_id))
     )
     record = result.one_or_none()
     if record is None:
@@ -278,7 +292,7 @@ async def get_sender_photo(
     president_id = await get_president_id_for_user(current_user, db, school_id)
     sender_filter = Message.sender_id == sender_id if sender_id is not None else Message.admin_sender_id == admin_sender_id
     has_posted = await db.scalar(
-        select(Message.id).where(Message.president_id == president_id, sender_filter).limit(1)
+        select(Message.id).where(in_room(president_id), sender_filter).limit(1)
     )
     if has_posted is None:
         raise HTTPException(status_code=404, detail="Sender not found")
@@ -301,13 +315,13 @@ async def get_messages(
     result = await db.execute(
         select(Message)
         .options(selectinload(Message.attachments))
-        .where(Message.president_id == president_id)
+        .where(in_room(president_id))
         .order_by(Message.created_at.desc())
         .offset(skip)
         .limit(limit)
     )
     messages = result.scalars().all()
-    total = await db.scalar(select(func.count(Message.id)).where(Message.president_id == president_id)) or 0
+    total = await db.scalar(select(func.count(Message.id)).where(in_room(president_id))) or 0
     return MessageList(messages=[_message_response(item, item.attachments) for item in messages], total=total)
 
 
@@ -322,12 +336,12 @@ async def get_recent_messages(
     result = await db.execute(
         select(Message)
         .options(selectinload(Message.attachments))
-        .where(Message.president_id == president_id)
+        .where(in_room(president_id))
         .order_by(Message.created_at.desc())
         .limit(limit)
     )
     messages = result.scalars().all()
-    total = await db.scalar(select(func.count(Message.id)).where(Message.president_id == president_id)) or 0
+    total = await db.scalar(select(func.count(Message.id)).where(in_room(president_id))) or 0
     return MessageList(messages=[_message_response(item, item.attachments) for item in messages], total=total)
 
 
@@ -342,7 +356,7 @@ async def delete_message(
     result = await db.execute(
         select(Message)
         .options(selectinload(Message.attachments))
-        .where(Message.id == message_id, Message.president_id == president_id)
+        .where(Message.id == message_id, in_room(president_id))
     )
     message = result.scalar_one_or_none()
     if message is None:

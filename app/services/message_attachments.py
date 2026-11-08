@@ -394,7 +394,7 @@ async def cleanup_orphaned_message_attachments(
     result = await db.execute(
         select(MessageAttachment.storage_path)
         .join(Message, Message.id == MessageAttachment.message_id)
-        .where(Message.president_id == tenant_id)
+        .where(Message.president_id.is_(None) if tenant_id == 0 else Message.president_id == tenant_id)  # 0: staff room
     )
     referenced = set(result.scalars().all())
     root = Path(settings.UPLOAD_DIR).resolve()

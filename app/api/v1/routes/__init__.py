@@ -14,6 +14,7 @@ from .notes import notesRouter
 from .site import siteRouter
 from .specialities import specialityRouter
 from .exams import examRouter
+from .inspectors import inspectorRouter
 from .ws_messages import ws_router
 
 def register_routes(app):
@@ -21,6 +22,7 @@ def register_routes(app):
         (authRouter, "/auth", ["Authentication"]),
         (adminRouter, "/admin", ["Admin"]),
         (analyticsRouter, "/admin/analytics", ["Admin analytics"]),
+        (inspectorRouter, "/admin/inspectors", ["Inspectors"]),
         (presidentRouter, "/president", ["President"]),
         (supervisorRouter, "/supervisor", ["Supervisor"]),
         (teacherRouter, "/teacher", ["Teacher"]),

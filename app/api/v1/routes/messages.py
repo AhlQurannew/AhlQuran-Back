@@ -50,7 +50,10 @@ def get_sender_role(user) -> SenderRole:
 
 def _sender_name(user) -> str:
     if isinstance(user, Admin):
-        return user.user
+        # Inspectors show their full name with their title; the administrator keeps his account name.
+        if getattr(user, "is_inspector", False):
+            return f"{user.full_name or user.user} (مفتش)"
+        return user.full_name or user.user
     return f"{user.firstname} {user.lastname}".strip()
 
 

@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.dependencies import require_admin
+from app.core.dependencies import require_super_admin
 from app.db.session import get_db
 from app.models.login_slide import LoginSlide
 from app.services.profile_images import (
@@ -78,7 +78,7 @@ async def get_login_slide_image(slide_id: int, db: AsyncSession = Depends(get_db
 
 
 @siteRouter.post("/login-slides/builtin", response_model=LoginSlideResponse, status_code=status.HTTP_201_CREATED)
-async def restore_builtin_slide(db: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
+async def restore_builtin_slide(db: AsyncSession = Depends(get_db), admin=Depends(require_super_admin)):
     """Put the default photo back in the slideshow (first position) after it was removed."""
     existing = await db.scalar(select(LoginSlide).where(LoginSlide.is_builtin.is_(True)))
     if existing is not None:
@@ -99,7 +99,7 @@ async def restore_builtin_slide(db: AsyncSession = Depends(get_db), admin=Depend
 async def upload_login_slide(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    admin=Depends(require_admin),
+    admin=Depends(require_super_admin),
 ):
     count = await db.scalar(select(func.count(LoginSlide.id))) or 0
     if count >= MAX_LOGIN_SLIDES:
@@ -128,7 +128,7 @@ async def upload_login_slide(
 async def reorder_login_slides(
     order: SlideOrder,
     db: AsyncSession = Depends(get_db),
-    admin=Depends(require_admin),
+    admin=Depends(require_super_admin),
 ):
     slides = {slide.id: slide for slide in await _ordered_slides(db)}
     if set(order.ids) != set(slides) or len(order.ids) != len(slides):
@@ -143,7 +143,7 @@ async def reorder_login_slides(
 async def delete_login_slide(
     slide_id: int,
     db: AsyncSession = Depends(get_db),
-    admin=Depends(require_admin),
+    admin=Depends(require_super_admin),
 ):
     slide = await db.get(LoginSlide, slide_id)
     if slide is None:

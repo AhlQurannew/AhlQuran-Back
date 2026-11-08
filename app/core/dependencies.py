@@ -75,6 +75,8 @@ async def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        if not admin.is_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is inactive")
         if payload.get("ver", 0) != admin.auth_version:
             raise HTTPException(status_code=401, detail="Session expired; sign in again")
 
@@ -131,6 +133,13 @@ async def require_admin(
      )
 
     return current_user
+
+async def require_super_admin(current_user=Depends(require_admin)):
+    """Full administrator only: inspectors (مفتش) are refused (site settings, inspector accounts)."""
+    if getattr(current_user, "is_inspector", False):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inspectors cannot perform this action")
+    return current_user
+
 
 async def require_president(
     current_user: User = Depends(get_current_user)

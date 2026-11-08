@@ -47,7 +47,7 @@ async def authenticate_ws_token(token: str, db: AsyncSession) -> User | Admin | 
             return None
         result = await db.execute(select(Admin).where(Admin.id == admin_id))
         admin = result.scalar_one_or_none()
-        if admin is None or payload.get("ver", 0) != admin.auth_version:
+        if admin is None or not admin.is_active or payload.get("ver", 0) != admin.auth_version:
             return None
         return admin
 
@@ -63,7 +63,10 @@ async def authenticate_ws_token(token: str, db: AsyncSession) -> User | Admin | 
 
 def _sender_name(account) -> str:
     if isinstance(account, Admin):
-        return account.user
+        # Inspectors show their full name with their title; the administrator keeps his account name.
+        if getattr(account, "is_inspector", False):
+            return f"{account.full_name or account.user} (مفتش)"
+        return account.full_name or account.user
     return f"{account.firstname} {account.lastname}".strip()
 
 

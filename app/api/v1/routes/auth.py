@@ -584,6 +584,8 @@ async def admin_login(
     if not is_password_hashed(admin.password_hash):
         admin.password_hash = get_password_hash(form_data.password)
         await db.commit()
+    if not admin.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is inactive")
     logger.info("Admin login succeeded: admin_id=%s", admin.id)
     
         #  if not admin.is_active:
@@ -598,6 +600,7 @@ async def admin_login(
         "sub": admin.user,
         "admin_id": admin.id,
         "role": "admin",
+        "admin_role": admin.role or "admin",
         "type": "admin",
         "ver": admin.auth_version
     }
@@ -622,7 +625,16 @@ async def admin_login(
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
-        "message" : "you are logged in as an admin !"
+        "message" : "you are logged in as an admin !",
+        # Real account info (the login page used to invent one, labelled «المشرف العام»)
+        "user": {
+            "id": admin.id,
+            "email": admin.email or admin.user,
+            "firstname": admin.full_name or admin.user,
+            "lastname": "",
+            "role": "INSPECTOR" if admin.is_inspector else "ADMIN",
+            "is_active": admin.is_active,
+        },
     }
 
 
@@ -661,6 +673,8 @@ async def get_current_admin_info(
     return {
         "id": current_admin.id,
         "username": current_admin.user,
+        "full_name": current_admin.full_name,
+        "role": "INSPECTOR" if current_admin.is_inspector else "ADMIN",
         "type": "admin"
     }
 
@@ -716,7 +730,7 @@ async def refresh_token(
                 detail="Admin not found",
             )
 
-        if payload.get("ver", 0) != admin.auth_version:
+        if payload.get("ver", 0) != admin.auth_version or not admin.is_active:
             raise HTTPException(status_code=401, detail="Session expired; sign in again")
         
         # Create new access token
@@ -725,6 +739,7 @@ async def refresh_token(
                 "sub": admin.user,
                 "admin_id": admin.id,
                 "role": "admin",
+                "admin_role": admin.role or "admin",
                 "type": "admin",
                 "ver": admin.auth_version,
             },
@@ -1064,7 +1079,7 @@ async def change_account_password(
     await db.commit()
 
     if isinstance(account, Admin):
-        token_data = {"sub": account.user, "admin_id": account.id, "role": "admin", "type": "admin", "ver": account.auth_version}
+        token_data = {"sub": account.user, "admin_id": account.id, "role": "admin", "admin_role": account.role or "admin", "type": "admin", "ver": account.auth_version}
     else:
         token_data = {"email": account.email, "user_id": account.id, "role": account.role.value, "type": "user", "ver": account.auth_version}
     access_token = create_access_token(token_data, expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))

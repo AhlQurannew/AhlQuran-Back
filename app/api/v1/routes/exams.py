@@ -483,6 +483,9 @@ async def speciality_standings(
     found = await _load_specialities(db, scope.president_id, speciality_id)
     if not found:
         raise HTTPException(status_code=404, detail="Speciality not found in this school")
+    # Teachers only see the rankings of specialities that include one of their circles.
+    if scope.lecture_ids is not None and not ({link.lecture_id for link in found[0].lectures} & scope.lecture_ids):
+        raise HTTPException(status_code=404, detail="Speciality not found in this school")
     return await _standings(db, scope.president_id, found[0], date_from, date_to)
 
 

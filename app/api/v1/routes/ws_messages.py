@@ -143,6 +143,7 @@ async def handle_websocket_connection(websocket: WebSocket, token: str, school_i
                 "sender_name": sender_name,
                 "president_id": president_id,
             }))
+            connected_version = account.auth_version
             while True:
                 raw = await websocket.receive_text()
                 try:
@@ -150,6 +151,13 @@ async def handle_websocket_connection(websocket: WebSocket, token: str, school_i
                 except json.JSONDecodeError:
                     await websocket.send_text(json.dumps({"type": "error", "detail": "Invalid JSON"}))
                     continue
+
+                # The account may have been deactivated or signed out (new password) since the socket
+                # opened: check it again before acting, and close the socket if it is no longer valid.
+                await db.refresh(account)
+                if not account.is_active or account.auth_version != connected_version:
+                    await websocket.close(code=4001, reason="Session ended")
+                    return
 
                 event_type = payload.get("type", "message")
                 if event_type == "typing":

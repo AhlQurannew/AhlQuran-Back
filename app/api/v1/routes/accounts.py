@@ -1,8 +1,10 @@
 """Activate / deactivate accounts down the hierarchy (تفعيل / تعطيل).
 
 - administrator and inspectors: any school account (on the schools list: the chief supervisor)
-- chief supervisor: supervisors, teachers, students and guardians of their school
-- supervisor: teachers, students and guardians of their school
+- chief supervisor: supervisors and teachers of their school
+- supervisor: teachers of their school
+
+Students and guardians are not included: they have no way to sign in to the app yet.
 
 Nobody can change their own account. Deactivating ends the account's sessions right away (the
 token version changes) and the account cannot sign in until it is activated again.
@@ -29,11 +31,11 @@ from app.models.user import User, UserRoleEnum
 logger = logging.getLogger(__name__)
 accountRouter = APIRouter()
 
-# Roles each manager may switch on / off.
+# Roles each manager may switch on / off (accounts that actually sign in).
 MANAGEABLE = {
-    UserRoleEnum.PRESIDENT: {UserRoleEnum.SUPERVISOR, UserRoleEnum.TEACHER, UserRoleEnum.STUDENT, UserRoleEnum.GUARDIAN},
-    UserRoleEnum.CHIEF_SUPERVISOR: {UserRoleEnum.SUPERVISOR, UserRoleEnum.TEACHER, UserRoleEnum.STUDENT, UserRoleEnum.GUARDIAN},
-    UserRoleEnum.SUPERVISOR: {UserRoleEnum.TEACHER, UserRoleEnum.STUDENT, UserRoleEnum.GUARDIAN},
+    UserRoleEnum.PRESIDENT: {UserRoleEnum.SUPERVISOR, UserRoleEnum.TEACHER},
+    UserRoleEnum.CHIEF_SUPERVISOR: {UserRoleEnum.SUPERVISOR, UserRoleEnum.TEACHER},
+    UserRoleEnum.SUPERVISOR: {UserRoleEnum.TEACHER},
 }
 
 

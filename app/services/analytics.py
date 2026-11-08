@@ -33,6 +33,10 @@ MAX_BUCKETS = 400
 MIN_RECORDS_FOR_HEALTH = 3
 GOOD_RATE, WARNING_RATE = 85.0, 70.0
 ALERT_LIMIT = 20
+TOP_LIMIT = 5
+MIN_RECORDS_FOR_TOP = 5  # sessions needed before a student can be ranked among the top
+# Composite score weights: attendance, memorisation (pages vs. the group's best), exam average.
+TOP_WEIGHTS = {"attendance": 0.35, "pages": 0.35, "exams": 0.30}
 
 
 @dataclass(frozen=True)
@@ -246,6 +250,58 @@ def student_alerts(
     return alerts[:ALERT_LIMIT]
 
 
+def top_students(
+    students: dict[int, dict],
+    attendance: list[AttendanceRow],
+    achievements: list[AchievementRow],
+    exam_avg: dict[int, float],
+    limit: int = TOP_LIMIT,
+) -> list[dict]:
+    """Top students per school and schooling mode (internal = full time, external = part time).
+
+    Score (0-100) = weighted mean of attendance rate, memorised pages relative to the best of the
+    same group, and exam average; a missing component (e.g. no exam yet) is left out of the weights.
+    """
+    att: dict[int, list[AttendanceRow]] = defaultdict(list)
+    pages: dict[int, float] = defaultdict(float)
+    for row in attendance:
+        att[row.student_id].append(row)
+    for row in achievements:
+        pages[row.student_id] += row.pages
+
+    groups: dict[tuple, list[dict]] = defaultdict(list)
+    for student_id, info in students.items():
+        records = att.get(student_id, [])
+        if len(records) < MIN_RECORDS_FOR_TOP:
+            continue
+        mode = "external" if info.get("enrollment_type") == "external" else "internal"
+        groups[(info.get("school_id"), mode)].append({
+            "id": student_id,
+            "name": info["name"],
+            "name_en": info.get("name_en"),
+            "attendance_rate": rate(sum(1 for r in records if r.status in ATTENDED), len(records)),
+            "pages": round(pages.get(student_id, 0.0), 1),
+            "exam_average": exam_avg.get(student_id),
+        })
+
+    out: dict = {}
+    for (school_id, mode), members in groups.items():
+        best_pages = max((m["pages"] for m in members), default=0) or 0
+        for m in members:
+            parts = {
+                "attendance": m["attendance_rate"],
+                "pages": (m["pages"] / best_pages * 100) if best_pages else None,
+                "exams": m["exam_average"],
+            }
+            used = {k: v for k, v in parts.items() if v is not None}
+            weight = sum(TOP_WEIGHTS[k] for k in used)
+            m["score"] = round(sum(TOP_WEIGHTS[k] * v for k, v in used.items()) / weight, 1) if weight else 0.0
+        members.sort(key=lambda m: (-m["score"], -m["pages"], m["name"]))
+        entry = out.setdefault(school_id, {"school_id": school_id, "internal": [], "external": []})
+        entry[mode] = [{**m, "rank": i + 1} for i, m in enumerate(members[:limit])]
+    return list(out.values())
+
+
 # ---------------------------------------------------------------- database loading
 
 
@@ -256,7 +312,7 @@ class ScopeNotFound(Exception):
 async def _load_students(db: AsyncSession, school_ids: list[int] | None, lecture_id: int | None, student_id: int | None):
     query = (
         select(Student.id, Student.president_id, Student.enrollment_date, User.firstname, User.lastname,
-               Student.first_name_en, Student.last_name_en, Student.sex)
+               Student.first_name_en, Student.last_name_en, Student.sex, Student.enrollment_type)
         .join(User, User.id == Student.user_id)
     )
     if school_ids is not None:
@@ -268,15 +324,33 @@ async def _load_students(db: AsyncSession, school_ids: list[int] | None, lecture
             select(SessionParticipation.student_id).where(SessionParticipation.lecture_id == lecture_id)
         ))
     students = {}
-    for sid, school_id, enrolled, first, last, first_en, last_en, sex in (await db.execute(query)).all():
+    for sid, school_id, enrolled, first, last, first_en, last_en, sex, mode in (await db.execute(query)).all():
         students[sid] = {
             "name": f"{first} {last}".strip(),
             "name_en": f"{first_en or ''} {last_en or ''}".strip() or None,
             "school_id": school_id,
             "enrollment_date": enrolled.date().isoformat() if enrolled else None,
             "sex": sex,
+            "enrollment_type": mode,
         }
     return students
+
+
+async def _load_exam_averages(db: AsyncSession, student_ids: Iterable[int], start: date, end: date) -> dict[int, float]:
+    """Average exam result (0-100) of each student over the period, present and marked sittings only."""
+    from app.models.exam import Exam, ExamResult
+
+    ids = list(student_ids)
+    if not ids:
+        return {}
+    rows = (await db.execute(
+        select(ExamResult.student_id, func.avg(ExamResult.mark * 100 / Exam.max_mark))
+        .join(Exam, Exam.id == ExamResult.exam_id)
+        .where(ExamResult.student_id.in_(ids), ExamResult.attendance == "present", ExamResult.mark.is_not(None),
+               Exam.exam_date >= start, Exam.exam_date <= end)
+        .group_by(ExamResult.student_id)
+    )).all()
+    return {sid: round(float(avg), 1) for sid, avg in rows if avg is not None}
 
 
 async def _load_enrollments(db: AsyncSession, student_ids: Iterable[int]) -> dict[int, set[int]]:
@@ -460,6 +534,14 @@ async def build_analytics(
             attendance, achievements,
         )
 
+    tops = []
+    if level in ("platform", "school", "lecture"):
+        exam_avg = await _load_exam_averages(db, students, start, end)
+        tops = top_students(students, attendance, achievements, exam_avg)
+        for entry in tops:
+            entry["school"] = schools.get(entry["school_id"], {}).get("name")
+        tops.sort(key=lambda e: e["school"] or "")
+
     # ---- student detail ----------------------------------------------------------------
     detail = None
     if level == "student" and student_record is not None:
@@ -497,6 +579,7 @@ async def build_analytics(
         "series": build_series(attendance, achievements, start, end, granularity),
         "breakdown": {"level": breakdown_level, "rows": rows},
         "alerts": alerts,
+        "top_students": tops,
         "student": detail,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
     }

@@ -102,3 +102,30 @@ def test_alerts_flag_low_attendance_first_then_inactive():
     attendance = [att(1, date(2026, 10, d), "absent") for d in range(1, 4)] + [att(3, date(2026, 10, 1), "present")]
     alerts = student_alerts(students, attendance, [])
     assert [(a["id"], a["reason"]) for a in alerts] == [(1, "low_attendance"), (2, "no_activity")]
+
+
+def test_top_students_per_school_and_mode():
+    from app.services.analytics import top_students
+
+    day = date(2026, 3, 1)
+    students = {
+        1: {"name": "A", "school_id": 7, "enrollment_type": "internal"},
+        2: {"name": "B", "school_id": 7, "enrollment_type": "internal"},
+        3: {"name": "C", "school_id": 7, "enrollment_type": "external"},
+        4: {"name": "D", "school_id": 7, "enrollment_type": "internal"},  # too few sessions: not ranked
+    }
+    attendance = []
+    for sid, statuses in ((1, ["present"] * 10), (2, ["present"] * 5 + ["absent"] * 5), (3, ["present"] * 6), (4, ["present"] * 2)):
+        attendance += [AttendanceRow(sid, 7, 1, day, s) for s in statuses]
+    achievements = [AchievementRow(1, 7, day, "normal", 10.0), AchievementRow(2, 7, day, "normal", 20.0)]
+    exam_avg = {1: 80.0}
+
+    [entry] = top_students(students, attendance, achievements, exam_avg)
+    internal = entry["internal"]
+    assert [s["id"] for s in internal] == [1, 2]
+    # A: attendance 100, pages 10/20 -> 50, exam 80  => (35*100 + 35*50 + 30*80) / 100 = 76.5
+    assert internal[0]["score"] == 76.5 and internal[0]["rank"] == 1
+    # B: attendance 50, pages 100, no exam => (35*50 + 35*100) / 70 = 75
+    assert internal[1]["score"] == 75.0
+    # external group is ranked on its own; no pages in the group -> attendance only
+    assert [s["id"] for s in entry["external"]] == [3] and entry["external"][0]["score"] == 100.0

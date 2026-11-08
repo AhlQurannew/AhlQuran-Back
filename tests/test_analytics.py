@@ -129,3 +129,21 @@ def test_top_students_per_school_and_mode():
     assert internal[1]["score"] == 75.0
     # external group is ranked on its own; no pages in the group -> attendance only
     assert [s["id"] for s in entry["external"]] == [3] and entry["external"][0]["score"] == 100.0
+
+
+def test_top_students_by_sex_ranks_each_group_separately():
+    from app.services.analytics import sex_of, top_students_by_sex
+
+    assert sex_of("Masculin") == "male" and sex_of("Féminin") == "female" and sex_of(None) is None
+    day = date(2026, 3, 1)
+    students = {
+        1: {"name": "A", "school_id": 7, "enrollment_type": "internal", "sex": "Masculin"},
+        2: {"name": "B", "school_id": 7, "enrollment_type": "internal", "sex": "Féminin"},
+    }
+    attendance = [AttendanceRow(1, 7, 1, day, "present")] * 6 + [AttendanceRow(2, 7, 1, day, "present")] * 3 \
+        + [AttendanceRow(2, 7, 1, day, "absent")] * 3
+    [entry] = top_students_by_sex(students, attendance, [], {})
+    assert [s["id"] for s in entry["internal"]] == [1, 2]
+    assert [s["id"] for s in entry["male"]["internal"]] == [1]
+    # the girl is first of her own ranking even though she is second overall
+    assert [(s["id"], s["rank"]) for s in entry["female"]["internal"]] == [(2, 1)]

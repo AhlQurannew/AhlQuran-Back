@@ -250,6 +250,42 @@ def student_alerts(
     return alerts[:ALERT_LIMIT]
 
 
+MALE_VALUES = {"masculin", "male", "m", "ذكر"}
+FEMALE_VALUES = {"féminin", "feminin", "female", "f", "أنثى"}
+
+
+def sex_of(value: str | None) -> str | None:
+    """'male' / 'female' from the stored value (the forms save «Masculin» / «Féminin»)."""
+    v = (value or "").strip().lower()
+    return "male" if v in MALE_VALUES else "female" if v in FEMALE_VALUES else None
+
+
+def top_students_by_sex(
+    students: dict[int, dict],
+    attendance: list[AttendanceRow],
+    achievements: list[AchievementRow],
+    exam_avg: dict[int, float],
+    limit: int = TOP_LIMIT,
+) -> list[dict]:
+    """top_students for everyone, plus separate rankings for boys and girls (each its own top N)."""
+    merged: dict = {}
+    for key, subset in (
+        ("all", students),
+        ("male", {sid: i for sid, i in students.items() if sex_of(i.get("sex")) == "male"}),
+        ("female", {sid: i for sid, i in students.items() if sex_of(i.get("sex")) == "female"}),
+    ):
+        for entry in top_students(subset, attendance, achievements, exam_avg, limit):
+            target = merged.setdefault(entry["school_id"], {
+                "school_id": entry["school_id"], "internal": [], "external": [],
+                "male": {"internal": [], "external": []}, "female": {"internal": [], "external": []},
+            })
+            if key == "all":
+                target["internal"], target["external"] = entry["internal"], entry["external"]
+            else:
+                target[key] = {"internal": entry["internal"], "external": entry["external"]}
+    return list(merged.values())
+
+
 def top_students(
     students: dict[int, dict],
     attendance: list[AttendanceRow],
@@ -537,7 +573,7 @@ async def build_analytics(
     tops = []
     if level in ("platform", "school", "lecture"):
         exam_avg = await _load_exam_averages(db, students, start, end)
-        tops = top_students(students, attendance, achievements, exam_avg)
+        tops = top_students_by_sex(students, attendance, achievements, exam_avg)
         for entry in tops:
             entry["school"] = schools.get(entry["school_id"], {}).get("name")
         tops.sort(key=lambda e: e["school"] or "")

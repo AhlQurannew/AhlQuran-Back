@@ -19,6 +19,8 @@ class President(Base):
     approved_by: Mapped[Optional[int]] = mapped_column(ForeignKey("admins.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default='false')
+    # School picture (path relative to UPLOAD_DIR), shown on the admin's school list
+    image_path: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     # Relationships
     user: Mapped["User"] = relationship(back_populates="president")

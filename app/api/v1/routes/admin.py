@@ -1,6 +1,8 @@
 ## this file contains admin-only routes for managing users and presidents
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -8,6 +10,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import selectinload
 
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.user import User, UserRoleEnum
 from app.models.president import President
@@ -208,6 +211,72 @@ async def deactivate_user(
 
 ## School Management Endpoints
 
+def _school_image_url(president: President) -> str | None:
+    if not president.image_path:
+        return None
+    # The file name changes on every upload, so it doubles as a cache-buster.
+    version = president.image_path.rsplit("/", 1)[-1].split(".")[0][:12]
+    return f"{settings.API_V1_PREFIX}/admin/schools/{president.id}/image?v={version}"
+
+
+@adminRouter.get("/schools/{school_id}/image")
+async def get_school_image(school_id: int, db: AsyncSession = Depends(get_db)):
+    """School picture (public, like the login slides: an <img> cannot send the auth header)."""
+    from app.services.profile_images import resolve_profile_image
+
+    president = await db.get(President, school_id)
+    image_path = resolve_profile_image(president.image_path if president else None)
+    if image_path is None:
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(image_path, media_type="image/webp", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@adminRouter.post("/schools/{school_id}/image")
+async def upload_school_image(
+    school_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    from app.services.profile_images import (
+        MAX_LOGIN_SLIDE_BYTES, read_profile_image_upload, remove_profile_image, store_school_image,
+    )
+
+    president = await db.get(President, school_id)
+    if president is None:
+        raise HTTPException(status_code=404, detail="School not found")
+    contents = await read_profile_image_upload(file, max_bytes=MAX_LOGIN_SLIDE_BYTES)
+    try:
+        stored = await run_in_threadpool(store_school_image, contents, school_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    old = president.image_path
+    president.image_path = stored
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        await run_in_threadpool(remove_profile_image, stored)
+        raise
+    await run_in_threadpool(remove_profile_image, old)
+    logger.info("School %s image updated by admin %s", school_id, admin.id)
+    return {"image_url": _school_image_url(president)}
+
+
+@adminRouter.delete("/schools/{school_id}/image", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_school_image(school_id: int, db: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
+    from app.services.profile_images import remove_profile_image
+
+    president = await db.get(President, school_id)
+    if president is None:
+        raise HTTPException(status_code=404, detail="School not found")
+    old = president.image_path
+    president.image_path = None
+    await db.commit()
+    await run_in_threadpool(remove_profile_image, old)
+    logger.info("School %s image removed by admin %s", school_id, admin.id)
+
+
 @adminRouter.get("/schools")
 async def get_all_schools(
     db: AsyncSession = Depends(get_db),
@@ -298,6 +367,7 @@ async def get_all_schools(
                 "president_count": 1,
                 "approval_date": president.approval_date.isoformat() if president.approval_date else None,
                 "created_at": president.created_at.isoformat() if president.created_at else None,
+                "image_url": _school_image_url(president),
                 "is_active": is_active
             })
         
@@ -493,6 +563,7 @@ async def delete_school(
         
         # Delete the president directly (foreign keys with ondelete="CASCADE" in PostgreSQL 
         # will cascade-delete all school entities)
+        school_image = president.image_path
         await db.delete(president)
         await db.flush()
         
@@ -502,6 +573,9 @@ async def delete_school(
             
         await db.commit()
         
+        if school_image:
+            from app.services.profile_images import remove_profile_image
+            await run_in_threadpool(remove_profile_image, school_image)
         logger.info(f"[DELETE SCHOOL] School '{school_name}' (ID: {school_id}) and {len(user_ids_to_delete)} users deleted successfully")
         
         return {

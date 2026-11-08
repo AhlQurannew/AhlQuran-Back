@@ -80,6 +80,24 @@ def store_login_slide_image(raw: bytes) -> str:
     return store_profile_image(raw, Path("site") / "login", max_side=1920)
 
 
+def store_school_image(raw: bytes, school_id: int) -> str:
+    return store_profile_image(raw, Path("schools") / str(school_id), max_side=1280)
+
+
+BUILTIN_PREFIX = "builtin/"
+BUILTIN_DIR = Path(__file__).resolve().parent.parent / "static" / "login"
+
+
+def resolve_builtin_image(relative_path: str | None) -> Path | None:
+    """Images shipped with the code (e.g. the default login photo): they survive redeploys."""
+    if not relative_path or not relative_path.startswith(BUILTIN_PREFIX):
+        return None
+    target = (BUILTIN_DIR / relative_path[len(BUILTIN_PREFIX):]).resolve()
+    if not target.is_relative_to(BUILTIN_DIR.resolve()) or not target.is_file():
+        return None
+    return target
+
+
 def resolve_profile_image(relative_path: str | None) -> Path | None:
     """Return the absolute path of a stored image, or None if missing or outside UPLOAD_DIR."""
     if not relative_path:

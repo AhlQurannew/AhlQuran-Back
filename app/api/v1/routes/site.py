@@ -15,7 +15,9 @@ from app.models.login_slide import LoginSlide
 from app.services.profile_images import (
     MAX_LOGIN_SLIDE_BYTES,
     read_profile_image_upload,
+    BUILTIN_PREFIX,
     remove_profile_image,
+    resolve_builtin_image,
     resolve_profile_image,
     store_login_slide_image,
 )
@@ -26,10 +28,14 @@ siteRouter = APIRouter()
 MAX_LOGIN_SLIDES = 10
 
 
+BUILTIN_PATH = f"{BUILTIN_PREFIX}masjid.jpg"
+
+
 class LoginSlideResponse(BaseModel):
     id: int
     url: str
     position: int
+    builtin: bool = False
 
 
 class SlideOrder(BaseModel):
@@ -41,6 +47,7 @@ def _slide_response(slide: LoginSlide) -> LoginSlideResponse:
         id=slide.id,
         url=f"{settings.API_V1_PREFIX}/site/login-slides/{slide.id}/image",
         position=slide.position,
+        builtin=slide.is_builtin,
     )
 
 
@@ -58,11 +65,34 @@ async def list_login_slides(db: AsyncSession = Depends(get_db)):
 @siteRouter.get("/login-slides/{slide_id}/image")
 async def get_login_slide_image(slide_id: int, db: AsyncSession = Depends(get_db)):
     slide = await db.get(LoginSlide, slide_id)
+    if slide is not None and slide.is_builtin:
+        builtin = resolve_builtin_image(slide.image_path)
+        if builtin is None:
+            raise HTTPException(status_code=404, detail="Slide not found")
+        return FileResponse(builtin, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
     image_path = resolve_profile_image(slide.image_path if slide else None)
     if image_path is None:
         raise HTTPException(status_code=404, detail="Slide not found")
     # File names are random per upload, so the image at this URL never changes.
     return FileResponse(image_path, media_type="image/webp", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@siteRouter.post("/login-slides/builtin", response_model=LoginSlideResponse, status_code=status.HTTP_201_CREATED)
+async def restore_builtin_slide(db: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
+    """Put the default photo back in the slideshow (first position) after it was removed."""
+    existing = await db.scalar(select(LoginSlide).where(LoginSlide.is_builtin.is_(True)))
+    if existing is not None:
+        return _slide_response(existing)
+    count = await db.scalar(select(func.count(LoginSlide.id))) or 0
+    if count >= MAX_LOGIN_SLIDES:
+        raise HTTPException(status_code=409, detail=f"A maximum of {MAX_LOGIN_SLIDES} slides is allowed")
+    first = await db.scalar(select(func.min(LoginSlide.position)))
+    slide = LoginSlide(image_path=BUILTIN_PATH, position=(first or 1) - 1, is_builtin=True)
+    db.add(slide)
+    await db.commit()
+    await db.refresh(slide)
+    logger.info("Built-in login slide restored by admin %s", admin.id)
+    return _slide_response(slide)
 
 
 @siteRouter.post("/login-slides", response_model=LoginSlideResponse, status_code=status.HTTP_201_CREATED)
@@ -118,8 +148,9 @@ async def delete_login_slide(
     slide = await db.get(LoginSlide, slide_id)
     if slide is None:
         raise HTTPException(status_code=404, detail="Slide not found")
-    old_path = slide.image_path
+    old_path = None if slide.is_builtin else slide.image_path  # the built-in file ships with the code
     await db.delete(slide)
     await db.commit()
-    await run_in_threadpool(remove_profile_image, old_path)
+    if old_path:
+        await run_in_threadpool(remove_profile_image, old_path)
     logger.info("Login slide %s deleted by admin %s", slide_id, admin.id)

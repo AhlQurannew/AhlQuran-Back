@@ -1,8 +1,8 @@
 """Inspectors (مفتش): accounts created and managed by the administrator.
 
 An inspector signs in like the administrator and has the same access, except what is reserved to
-the administrator himself (login page images, inspector accounts). It belongs to the admin who
-created it: deactivating it ends its sessions, deleting that admin deletes it.
+the administrators (login page images, inspector and administrator accounts). Deactivating it
+ends its sessions. If the admin who created it is deleted, it moves to that admin's creator.
 """
 import logging
 
@@ -22,13 +22,20 @@ inspectorRouter = APIRouter()
 MIN_PASSWORD = 10
 
 
+def check_password_bytes(value: str | None) -> str | None:
+    """bcrypt only reads the first 72 bytes: refuse longer passwords instead of silently cutting them."""
+    if value is not None and len(value.encode("utf-8")) > 72:
+        raise ValueError("The password must not exceed 72 bytes")
+    return value
+
+
 class InspectorCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     username: str = Field(min_length=3, max_length=100)
     full_name: str = Field(min_length=1, max_length=150)
     email: EmailStr | None = None
-    password: str = Field(min_length=MIN_PASSWORD, max_length=128)
+    password: str = Field(min_length=MIN_PASSWORD)
 
     @field_validator("username", "full_name")
     @classmethod
@@ -38,6 +45,11 @@ class InspectorCreate(BaseModel):
             raise ValueError("This field is required")
         return value
 
+    @field_validator("password")
+    @classmethod
+    def password_bytes(cls, value):
+        return check_password_bytes(value)
+
 
 class InspectorUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -46,7 +58,12 @@ class InspectorUpdate(BaseModel):
     email: EmailStr | None = None
     is_active: bool | None = None
     # A new password resets the inspector's sessions.
-    password: str | None = Field(default=None, min_length=MIN_PASSWORD, max_length=128)
+    password: str | None = Field(default=None, min_length=MIN_PASSWORD)
+
+    @field_validator("password")
+    @classmethod
+    def password_bytes(cls, value):
+        return check_password_bytes(value)
 
 
 class InspectorOut(BaseModel):
@@ -72,7 +89,7 @@ async def _get(db: AsyncSession, inspector_id: int) -> Admin:
     return inspector
 
 
-async def _check_unique(db: AsyncSession, username: str | None, email: str | None, exclude_id: int | None = None) -> None:
+async def check_unique(db: AsyncSession, username: str | None, email: str | None, exclude_id: int | None = None) -> None:
     if username:
         query = select(Admin.id).where(func.lower(Admin.user) == username.lower())
         if exclude_id:
@@ -96,7 +113,7 @@ async def list_inspectors(db: AsyncSession = Depends(get_db), admin=Depends(requ
 @inspectorRouter.post("/", response_model=InspectorOut, status_code=status.HTTP_201_CREATED)
 async def create_inspector(data: InspectorCreate, db: AsyncSession = Depends(get_db), admin=Depends(require_super_admin)):
     email = data.email.lower() if data.email else None
-    await _check_unique(db, data.username, email)
+    await check_unique(db, data.username, email)
     if data.password.strip().lower() in {data.username.lower(), (email or "")}:
         raise HTTPException(status_code=422, detail="The password must differ from the username and e-mail")
     inspector = Admin(
@@ -117,7 +134,7 @@ async def update_inspector(inspector_id: int, data: InspectorUpdate, db: AsyncSe
     changes = data.model_dump(exclude_unset=True)
     if "email" in changes:
         email = changes["email"].lower() if changes["email"] else None
-        await _check_unique(db, None, email, exclude_id=inspector.id)
+        await check_unique(db, None, email, exclude_id=inspector.id)
         inspector.email = email
     if changes.get("full_name"):
         inspector.full_name = changes["full_name"].strip()

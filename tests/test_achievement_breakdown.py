@@ -214,13 +214,13 @@ async def test_supervisor_achievement_breakdown_is_school_scoped_and_filters_dat
         current_user=supervisor_user,
     )
 
-    assert result == {"normal": 1, "small": 1, "big": 0}
-    assert selected_student_result == {"normal": 1, "small": 1, "big": 0}
+    assert result == {"normal": 0.23, "small": 0.09, "big": 0}
+    assert selected_student_result == {"normal": 0.23, "small": 0.09, "big": 0}
     assert attendance == {"present": 1, "late": 0, "absent": 0, "excused": 0, "total": 1}
-    assert halqa == [{"student": "Student Reports", "pages": 2.0}]
+    assert halqa == [{"student": "Student Reports", "thumn": 0.23}]
     assert timeline == [
-        {"date": "2026-03-15", "memorization": 1.0, "minorRev": 0.0, "majorRev": 0.0},
-        {"date": "2026-04-10", "memorization": 1.0, "minorRev": 1.0, "majorRev": 0.0},
+        {"date": "2026-03-15", "memorization": 0.23, "minorRev": 0.0, "majorRev": 0.0},
+        {"date": "2026-04-10", "memorization": 0.23, "minorRev": 0.09, "majorRev": 0.0},
     ]
     assert no_matches == {"normal": 0, "small": 0, "big": 0}
 
@@ -274,7 +274,7 @@ async def test_teacher_achievement_breakdown_limits_results_to_assigned_lectures
         current_user=teacher_user,
     )
 
-    assert result == {"normal": 1, "small": 0, "big": 0}
+    assert result == {"normal": 0.23, "small": 0, "big": 0}
 
     attendance = await get_teacher_attendance_breakdown(
         lecture_id=lecture.id,
@@ -301,7 +301,7 @@ async def test_teacher_achievement_breakdown_limits_results_to_assigned_lectures
     )
 
     assert attendance == {"present": 0, "late": 1, "absent": 0, "excused": 0, "total": 1}
-    assert halqa == [{"student": "Student Reports", "pages": 1.0}]
+    assert halqa == [{"student": "Student Reports", "thumn": 0.23}]
     assert timeline == [
-        {"date": "2026-03-15", "memorization": 1.0, "minorRev": 0.0, "majorRev": 0.0}
+        {"date": "2026-03-15", "memorization": 0.23, "minorRev": 0.0, "majorRev": 0.0}
     ]

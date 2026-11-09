@@ -20,8 +20,8 @@ def att(student, day, status, school=1, lecture=10):
     return AttendanceRow(student, school, lecture, day, status)
 
 
-def ach(student, day, pages, kind="normal", school=1):
-    return AchievementRow(student, school, day, kind, pages)
+def ach(student, day, thumn, kind="normal", school=1):
+    return AchievementRow(student, school, day, kind, thumn)
 
 
 def test_rate_counts_present_and_late_as_attended():
@@ -48,10 +48,10 @@ def test_health_thresholds_and_small_samples():
     assert health(None, 0) == "insufficient"
 
 
-def test_pages_are_summed_per_type():
+def test_thumn_are_summed_per_type():
     summary = summarize([], [ach(1, date(2026, 10, 1), 2.0), ach(1, date(2026, 10, 2), 1.0, "big")])
-    assert summary["pages"] == 3.0
-    assert summary["pages_by_type"] == {"normal": 2.0, "small": 0.0, "big": 1.0}
+    assert summary["thumn"] == 3.0
+    assert summary["thumn_by_type"] == {"normal": 2.0, "small": 0.0, "big": 1.0}
     assert summary["achievements"] == 2
 
 
@@ -123,11 +123,11 @@ def test_top_students_per_school_and_mode():
     [entry] = top_students(students, attendance, achievements, exam_avg)
     internal = entry["internal"]
     assert [s["id"] for s in internal] == [1, 2]
-    # A: attendance 100, pages 10/20 -> 50, exam 80  => (35*100 + 35*50 + 30*80) / 100 = 76.5
+    # A: attendance 100, thumn 10/20 -> 50, exam 80  => (35*100 + 35*50 + 30*80) / 100 = 76.5
     assert internal[0]["score"] == 76.5 and internal[0]["rank"] == 1
-    # B: attendance 50, pages 100, no exam => (35*50 + 35*100) / 70 = 75
+    # B: attendance 50, thumn 100, no exam => (35*50 + 35*100) / 70 = 75
     assert internal[1]["score"] == 75.0
-    # external group is ranked on its own; no pages in the group -> attendance only
+    # external group is ranked on its own; no thumn in the group -> attendance only
     assert [s["id"] for s in entry["external"]] == [3] and entry["external"][0]["score"] == 100.0
 
 
@@ -147,3 +147,16 @@ def test_top_students_by_sex_ranks_each_group_separately():
     assert [s["id"] for s in entry["male"]["internal"]] == [1]
     # the girl is first of her own ranking even though she is second overall
     assert [(s["id"], s["rank"]) for s in entry["female"]["internal"]] == [(2, 1)]
+
+
+def test_top_students_score_ignores_reviews():
+    from app.services.analytics import top_students
+
+    day = date(2026, 3, 1)
+    students = {1: {"name": "A", "school_id": 1}, 2: {"name": "B", "school_id": 1}}
+    attendance = [
+        *(AttendanceRow(student, 1, None, day, "present") for student in (1, 2) for _ in range(5)),
+    ]
+    achievements = [ach(1, day, 2.0), ach(2, day, 1.0), ach(2, day, 50.0, kind="big")]
+    [entry] = top_students(students, attendance, achievements, {})
+    assert [(m["id"], m["thumn"]) for m in entry["internal"]] == [(1, 2.0), (2, 1.0)]

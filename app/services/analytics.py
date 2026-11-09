@@ -13,7 +13,7 @@ from typing import Iterable, Literal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.quran_pages import calculate_achievement_pages
+from app.core.quran_thumn import calculate_achievement_thumn
 from app.models.acheivements import Achievement
 from app.models.attendance import Attendance
 from app.models.lecture import Lecture, lecture_teachers
@@ -35,8 +35,8 @@ GOOD_RATE, WARNING_RATE = 85.0, 70.0
 ALERT_LIMIT = 20
 TOP_LIMIT = 5
 MIN_RECORDS_FOR_TOP = 5  # sessions needed before a student can be ranked among the top
-# Composite score weights: attendance, memorisation (pages vs. the group's best), exam average.
-TOP_WEIGHTS = {"attendance": 0.35, "pages": 0.35, "exams": 0.30}
+# Composite score weights: attendance, memorisation (thumn vs. the group's best), exam average.
+TOP_WEIGHTS = {"attendance": 0.35, "thumn": 0.35, "exams": 0.30}
 
 
 @dataclass(frozen=True)
@@ -54,7 +54,7 @@ class AchievementRow:
     school_id: int | None
     day: date
     kind: str
-    pages: float
+    thumn: float
 
 
 # ---------------------------------------------------------------- pure helpers
@@ -126,10 +126,10 @@ def summarize(attendance: Iterable[AttendanceRow], achievements: Iterable[Achiev
     statuses = dict.fromkeys(STATUSES, 0)
     for row in attendance:
         statuses[row.status] = statuses.get(row.status, 0) + 1
-    pages_by_kind = dict.fromkeys(ACHIEVEMENT_TYPES, 0.0)
+    thumn_by_kind = dict.fromkeys(ACHIEVEMENT_TYPES, 0.0)
     count = 0
     for row in achievements:
-        pages_by_kind[row.kind] = pages_by_kind.get(row.kind, 0.0) + row.pages
+        thumn_by_kind[row.kind] = thumn_by_kind.get(row.kind, 0.0) + row.thumn
         count += 1
     total = sum(statuses.values())
     attended = sum(statuses[s] for s in ATTENDED)
@@ -138,8 +138,8 @@ def summarize(attendance: Iterable[AttendanceRow], achievements: Iterable[Achiev
         "attendance_rate": rate(attended, total),
         "status_breakdown": statuses,
         "achievements": count,
-        "pages": round(sum(pages_by_kind.values()), 1),
-        "pages_by_type": {k: round(v, 1) for k, v in pages_by_kind.items()},
+        "thumn": round(sum(thumn_by_kind.values()), 2),
+        "thumn_by_type": {k: round(v, 2) for k, v in thumn_by_kind.items()},
     }
 
 
@@ -166,8 +166,8 @@ def build_series(
             "attendance_records": summary["attendance_records"],
             **{status: summary["status_breakdown"][status] for status in STATUSES},
             "achievements": summary["achievements"],
-            "pages": summary["pages"],
-            **{f"pages_{kind}": summary["pages_by_type"][kind] for kind in ACHIEVEMENT_TYPES},
+            "thumn": summary["thumn"],
+            **{f"thumn_{kind}": summary["thumn_by_type"][kind] for kind in ACHIEVEMENT_TYPES},
         })
     return series
 
@@ -208,7 +208,7 @@ def entity_rows(
             "attendance_records": summary["attendance_records"],
             "status_breakdown": summary["status_breakdown"],
             "achievements": summary["achievements"],
-            "pages": summary["pages"],
+            "thumn": summary["thumn"],
             "last_activity": max(days).isoformat() if days else None,
             "health": health(summary["attendance_rate"], summary["attendance_records"]),
         })
@@ -222,17 +222,17 @@ def student_alerts(
 ) -> list[dict]:
     """Students needing attention: low attendance, or enrolled with no activity in the period."""
     att: dict[int, list[AttendanceRow]] = defaultdict(list)
-    pages: dict[int, float] = defaultdict(float)
+    thumn: dict[int, float] = defaultdict(float)
     for row in attendance:
         att[row.student_id].append(row)
     for row in achievements:
-        pages[row.student_id] += row.pages
+        thumn[row.student_id] += row.thumn
     alerts = []
     for student_id, info in students.items():
         records = att.get(student_id, [])
         attended = sum(1 for r in records if r.status in ATTENDED)
         student_rate = rate(attended, len(records))
-        if not records and student_id not in pages:
+        if not records and student_id not in thumn:
             reason = "no_activity"
         elif student_rate is not None and len(records) >= MIN_RECORDS_FOR_HEALTH and student_rate < WARNING_RATE:
             reason = "low_attendance"
@@ -244,7 +244,7 @@ def student_alerts(
             "reason": reason,
             "attendance_rate": student_rate,
             "attendance_records": len(records),
-            "pages": round(pages.get(student_id, 0.0), 1),
+            "thumn": round(thumn.get(student_id, 0.0), 2),
         })
     alerts.sort(key=lambda a: (a["reason"] != "low_attendance", a["attendance_rate"] if a["attendance_rate"] is not None else 101))
     return alerts[:ALERT_LIMIT]
@@ -295,15 +295,16 @@ def top_students(
 ) -> list[dict]:
     """Top students per school and schooling mode (internal = full time, external = part time).
 
-    Score (0-100) = weighted mean of attendance rate, memorised pages relative to the best of the
+    Score (0-100) = weighted mean of attendance rate, newly memorised Thumn (reviews excluded) relative to the best of the
     same group, and exam average; a missing component (e.g. no exam yet) is left out of the weights.
     """
     att: dict[int, list[AttendanceRow]] = defaultdict(list)
-    pages: dict[int, float] = defaultdict(float)
+    thumn: dict[int, float] = defaultdict(float)
     for row in attendance:
         att[row.student_id].append(row)
     for row in achievements:
-        pages[row.student_id] += row.pages
+        if row.kind == "normal":
+            thumn[row.student_id] += row.thumn
 
     groups: dict[tuple, list[dict]] = defaultdict(list)
     for student_id, info in students.items():
@@ -316,23 +317,23 @@ def top_students(
             "name": info["name"],
             "name_en": info.get("name_en"),
             "attendance_rate": rate(sum(1 for r in records if r.status in ATTENDED), len(records)),
-            "pages": round(pages.get(student_id, 0.0), 1),
+            "thumn": round(thumn.get(student_id, 0.0), 2),
             "exam_average": exam_avg.get(student_id),
         })
 
     out: dict = {}
     for (school_id, mode), members in groups.items():
-        best_pages = max((m["pages"] for m in members), default=0) or 0
+        best_thumn = max((m["thumn"] for m in members), default=0) or 0
         for m in members:
             parts = {
                 "attendance": m["attendance_rate"],
-                "pages": (m["pages"] / best_pages * 100) if best_pages else None,
+                "thumn": (m["thumn"] / best_thumn * 100) if best_thumn else None,
                 "exams": m["exam_average"],
             }
             used = {k: v for k, v in parts.items() if v is not None}
             weight = sum(TOP_WEIGHTS[k] for k in used)
             m["score"] = round(sum(TOP_WEIGHTS[k] * v for k, v in used.items()) / weight, 1) if weight else 0.0
-        members.sort(key=lambda m: (-m["score"], -m["pages"], m["name"]))
+        members.sort(key=lambda m: (-m["score"], -m["thumn"], m["name"]))
         entry = out.setdefault(school_id, {"school_id": school_id, "internal": [], "external": []})
         entry[mode] = [{**m, "rank": i + 1} for i, m in enumerate(members[:limit])]
     return list(out.values())
@@ -435,7 +436,7 @@ async def _load_achievements(db, school_ids, student_ids, start, end) -> list[Ac
         if day is None or not in_period(day, start, end):
             continue
         rows.append(AchievementRow(sid, school, day, getattr(kind, "value", str(kind)),
-                                   calculate_achievement_pages(fs, fv, ts, tv)))
+                                   calculate_achievement_thumn(fs, fv, ts, tv)))
     return rows
 
 
@@ -583,8 +584,8 @@ async def build_analytics(
     if level == "student" and student_record is not None:
         cumulative, running = [], 0.0
         for row in sorted(achievements, key=lambda r: r.day):
-            running += row.pages
-            cumulative.append({"day": row.day.isoformat(), "pages": round(running, 1)})
+            running += row.thumn
+            cumulative.append({"day": row.day.isoformat(), "thumn": round(running, 2)})
         detail = {
             "enrollment_date": student_record["enrollment_date"],
             "sex": student_record["sex"],
@@ -598,10 +599,10 @@ async def build_analytics(
                 for r in sorted(attendance, key=lambda r: r.day, reverse=True)[:120]
             ],
             "achievements": [
-                {"day": r.day.isoformat(), "type": r.kind, "pages": r.pages}
+                {"day": r.day.isoformat(), "type": r.kind, "thumn": r.thumn}
                 for r in sorted(achievements, key=lambda r: r.day, reverse=True)[:120]
             ],
-            "cumulative_pages": cumulative,
+            "cumulative_thumn": cumulative,
         }
 
     return {

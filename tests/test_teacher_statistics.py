@@ -50,7 +50,7 @@ async def test_teacher_statistics_return_empty_data_when_no_lectures(db_session,
         "total_teachers": 0,
         "total_supervisors": 0,
         "present_today": 0,
-        "total_pages_memorized": 0,
+        "total_thumn_memorized": 0,
         "total_lectures": 0,
     }
     assert attendance == []
@@ -142,7 +142,7 @@ async def test_teacher_statistics_are_scoped_to_assigned_school_lectures(db_sess
     assert summary["total_students"] == 1
     assert summary["total_lectures"] == 1
     assert summary["present_today"] == 1
-    assert summary["total_pages_memorized"] == 1
+    assert summary["total_thumn_memorized"] == 0.32
     assert attendance == [{
         "date": date.today(),
         "present": 1,
@@ -150,5 +150,5 @@ async def test_teacher_statistics_are_scoped_to_assigned_school_lectures(db_sess
         "total": 1,
         "percentage": "100.0%",
     }]
-    assert memorizers == [{"student": "StudentA Statistics", "pages": 1, "rank": 1}]
+    assert memorizers == [{"student": "StudentA Statistics", "thumn": 0.32, "rank": 1}]
     assert distribution == [{"className": "حلقة أ", "students": 1, "percentage": "100.0%"}]

@@ -9,7 +9,7 @@ class StatsSummaryResponse(BaseModel):
     total_teachers: int = Field(default=0, description="Total number of teachers")
     total_supervisors: int = Field(default=0, description="Total number of supervisors")
     present_today: int = Field(..., description="Number of students present today")
-    total_pages_memorized: int = Field(..., description="Total pages memorized by all students")
+    total_thumn_memorized: float = Field(..., description="Total Thumn recorded for all students")
     total_lectures: int = Field(..., description="Total number of lectures/circles")
 
     class Config:
@@ -55,7 +55,7 @@ class AttendanceStatisticsResponse(BaseModel):
 class MemorizationRecordResponse(BaseModel):
     """Top memorizer record response"""
     student: str = Field(..., description="Full name of the student")
-    pages: int = Field(..., description="Number of pages/achievements")
+    thumn: float = Field(..., description="Thumn recorded for this student")
     rank: int = Field(..., description="Rank position (1, 2, 3, etc.)")
 
     class Config:

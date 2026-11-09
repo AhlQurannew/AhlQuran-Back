@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import Date, select, func, String, cast
+from sqlalchemy import Date, and_, select, func, String, cast
 from sqlalchemy.orm import selectinload
 from datetime import datetime, date
 from app.db.session import get_db
@@ -13,7 +13,7 @@ from app.models.student import Student
 from app.models.guardian import Guardian
 from app.models.user import User, UserRoleEnum
 from app.models.attendance import Attendance, AttendanceStatus
-from app.models.acheivements import Achievement
+from app.models.acheivements import Achievement, AchievementType
 from app.models.lecture import Lecture
 from app.models.sessionParticipation import SessionParticipation
 
@@ -33,7 +33,7 @@ from app.core.dependencies import (
     require_school_management_access,
 )
 from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
-from app.core.quran_pages import calculate_achievement_pages
+from app.core.quran_thumn import calculate_achievement_thumn, rank_students_by_thumn
 from app.core.account_lifecycle import restore_orphaned_account
 
 
@@ -306,23 +306,19 @@ async def get_statistics_summary(
     )
     present_today = present_today_result.scalar() or 0
 
-    # Total pages memorized (sum of achievements)
-    total_pages_result = await db.execute(
-        select(func.sum(
-            (Achievement.to_surah * 20 + Achievement.to_verse) -
-            (Achievement.from_surah * 20 + Achievement.from_verse)
-        ))
+    ranges = await db.execute(
+        select(Achievement.from_surah, Achievement.from_verse, Achievement.to_surah, Achievement.to_verse)
         .join(Student, Achievement.student_id == Student.id)
-        .where(Student.president_id == president_id)
+        .where(Student.president_id == president_id, Achievement.achievement_type == AchievementType.NORMAL)
     )
-    total_pages = total_pages_result.scalar() or 0
+    total_thumn = sum(calculate_achievement_thumn(*row) for row in ranges.all())
 
     return {
         "total_students": total_students,
         "total_teachers": total_teachers,
         "total_supervisors": total_supervisors,
         "present_today": present_today,
-        "total_pages_memorized": max(0, int(total_pages / 15)),  # Rough estimate
+        "total_thumn_memorized": round(total_thumn, 2),
         "total_lectures": total_lectures
     }
 
@@ -490,7 +486,7 @@ async def get_achievement_breakdown(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_school_management_access),
 ):
-    """Count achievement types for the authenticated school and requested filters."""
+    """Thumn per achievement type for the authenticated school and requested filters."""
     if start_date and end_date and start_date > end_date:
         raise HTTPException(status_code=422, detail="start_date must be on or before end_date")
 
@@ -529,7 +525,7 @@ async def get_achievement_breakdown(
             raise HTTPException(status_code=404, detail="Student not found in the selected school or lecture")
 
     query = (
-        select(Achievement.achievement_type, func.count(Achievement.id))
+        select(Achievement.achievement_type, Achievement.from_surah, Achievement.from_verse, Achievement.to_surah, Achievement.to_verse)
         .join(Student, Student.id == Achievement.student_id)
         .where(Student.president_id == president_id)
     )
@@ -544,13 +540,13 @@ async def get_achievement_breakdown(
     if end_date is not None:
         query = query.where(achievement_date <= end_date)
 
-    result = await db.execute(query.group_by(Achievement.achievement_type))
-    counts = {"normal": 0, "small": 0, "big": 0}
-    for achievement_type, count in result.all():
+    result = await db.execute(query)
+    thumn_by_type = {"normal": 0.0, "small": 0.0, "big": 0.0}
+    for achievement_type, *verse_range in result.all():
         key = achievement_type.value if hasattr(achievement_type, "value") else str(achievement_type)
-        if key in counts:
-            counts[key] = count
-    return counts
+        if key in thumn_by_type:
+            thumn_by_type[key] += calculate_achievement_thumn(*verse_range)
+    return {key: round(value, 2) for key, value in thumn_by_type.items()}
 
 
 async def _get_school_statistics_scope(
@@ -669,6 +665,7 @@ async def get_halqa_breakdown(
         .where(
             Student.president_id == president_id,
             Student.id.in_(enrolled_student_ids),
+            Achievement.achievement_type == AchievementType.NORMAL,
         )
     )
     if start_date is not None:
@@ -681,15 +678,15 @@ async def get_halqa_breakdown(
     for student_pk, firstname, lastname, from_surah, from_verse, to_surah, to_verse in result.all():
         student_data = students.setdefault(
             student_pk,
-            {"student": f"{firstname} {lastname}".strip(), "pages": 0.0},
+            {"student": f"{firstname} {lastname}".strip(), "thumn": 0.0},
         )
-        student_data["pages"] += calculate_achievement_pages(
+        student_data["thumn"] += calculate_achievement_thumn(
             from_surah, from_verse, to_surah, to_verse
         )
 
     return sorted(
-        ({**item, "pages": round(item["pages"], 1)} for item in students.values()),
-        key=lambda item: (-item["pages"], item["student"]),
+        ({**item, "thumn": round(item["thumn"], 2)} for item in students.values()),
+        key=lambda item: (-item["thumn"], item["student"]),
     )
 
 
@@ -735,7 +732,7 @@ async def get_progress_timeline(
         query = query.where(achievement_date <= end_date)
 
     result = await db.execute(query.order_by(achievement_date, Achievement.id))
-    daily_pages: dict[date, dict[str, float]] = {}
+    daily_thumn: dict[date, dict[str, float]] = {}
     type_to_series = {"normal": "memorization", "small": "minorRev", "big": "majorRev"}
     for achievement_day, achievement_type, from_surah, from_verse, to_surah, to_verse in result.all():
         if achievement_day is None:
@@ -744,23 +741,23 @@ async def get_progress_timeline(
         series_key = type_to_series.get(type_key)
         if series_key is None:
             continue
-        daily_pages.setdefault(
+        daily_thumn.setdefault(
             achievement_day,
             {"memorization": 0.0, "minorRev": 0.0, "majorRev": 0.0},
-        )[series_key] += calculate_achievement_pages(
+        )[series_key] += calculate_achievement_thumn(
             from_surah, from_verse, to_surah, to_verse
         )
 
     totals = {"memorization": 0.0, "minorRev": 0.0, "majorRev": 0.0}
     timeline = []
-    for achievement_day, page_counts in sorted(daily_pages.items()):
-        for series_key, pages in page_counts.items():
-            totals[series_key] += pages
+    for achievement_day, thumn_counts in sorted(daily_thumn.items()):
+        for series_key, thumn in thumn_counts.items():
+            totals[series_key] += thumn
         timeline.append({
             "date": achievement_day.isoformat(),
-            "memorization": round(totals["memorization"], 1),
-            "minorRev": round(totals["minorRev"], 1),
-            "majorRev": round(totals["majorRev"], 1),
+            "memorization": round(totals["memorization"], 2),
+            "minorRev": round(totals["minorRev"], 2),
+            "majorRev": round(totals["majorRev"], 2),
         })
     return timeline
 
@@ -775,31 +772,13 @@ async def get_top_memorizers(
     """Get top students by memorization progress"""
     president_id = await get_current_president_id(current_user, db, school_id)
 
-    # Get students with their total achievement pages
     result = await db.execute(
-        select(
-            Student,
-            User,
-            func.count(Achievement.id).label('total_achievements')
-        )
+        select(Student.id, User.firstname, User.lastname, Achievement.from_surah, Achievement.from_verse, Achievement.to_surah, Achievement.to_verse)
         .join(User, Student.user_id == User.id)
-        .outerjoin(Achievement, Achievement.student_id == Student.id)
+        .outerjoin(Achievement, and_(Achievement.student_id == Student.id, Achievement.achievement_type == AchievementType.NORMAL))
         .where(Student.president_id == president_id)
-        .group_by(Student.id, User.id)
-        .order_by(func.count(Achievement.id).desc())
-        .limit(limit)
     )
-
-    students_data = result.all()
-
-    return [
-        {
-            "student": f"{user.firstname} {user.lastname}",
-            "pages": count,
-            "rank": idx + 1
-        }
-        for idx, (student, user, count) in enumerate(students_data)
-    ]
+    return rank_students_by_thumn(result.all(), limit)
 
 
 @presidentRouter.get("/statistics/lecture-distribution", response_model=list[LectureDistributionResponse])

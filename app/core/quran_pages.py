@@ -2,8 +2,6 @@
 Quran page mapping based on Medina Mushaf (604 pages).
 Maps each page to its starting [surah, verse].
 """
-from bisect import bisect_right
-from typing import Optional
 
 # Index 0 is empty to align list index with 1-based page numbers
 QURAN_PAGES = [
@@ -90,42 +88,3 @@ QURAN_PAGES = [
     [85, 1], [86, 1], [87, 16], [89, 1], [89, 24], [91, 1], [92, 15], [95, 1], [97, 1], [98, 8],
     [100, 10], [103, 1], [106, 1], [109, 1], [112, 1], [115, 1]
   ]
-
-
-# Page start positions in order, for a binary search instead of a 604-step scan per call.
-_PAGE_STARTS = [tuple(page) for page in QURAN_PAGES[1:]]
-
-
-def get_page_number(surah_number: int, verse_number: int) -> Optional[int]:
-    """
-    Returns the physical page number (1 to 604) in the Medina Mushaf for a given surah and verse.
-    """
-    if surah_number < 1 or surah_number > 114 or verse_number < 1:
-        return None
-    # Last page whose start is at or before (surah, verse); page numbers are 1-based.
-    return max(1, bisect_right(_PAGE_STARTS, (surah_number, verse_number)))
-
-
-def calculate_achievement_pages(
-    from_surah: Optional[int],
-    from_verse: Optional[int],
-    to_surah: Optional[int],
-    to_verse: Optional[int]
-) -> float:
-    """
-    Calculates the number of physical Quran pages covered by an achievement range.
-    Minimum return value is 1.0 page.
-    """
-    if from_surah is None or to_surah is None:
-        return 1.0
-        
-    fv = from_verse if from_verse is not None and from_verse >= 1 else 1
-    tv = to_verse if to_verse is not None and to_verse >= 1 else 1
-    
-    p1 = get_page_number(from_surah, fv)
-    p2 = get_page_number(to_surah, tv)
-    
-    if p1 is None or p2 is None:
-        return 1.0
-        
-    return float(max(1, abs(p2 - p1) + 1))

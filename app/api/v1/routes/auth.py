@@ -675,7 +675,8 @@ async def get_current_admin_info(
         "username": current_admin.user,
         "full_name": current_admin.full_name,
         "role": "INSPECTOR" if current_admin.is_inspector else "ADMIN",
-        "type": "admin"
+        "type": "admin",
+        "is_main": not current_admin.is_inspector and current_admin.created_by_id is None,
     }
 
 

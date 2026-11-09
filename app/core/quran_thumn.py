@@ -107,6 +107,7 @@ _EDGES = tuple(
     _verse_index(surah, verse) - (0.5 if number in THUMN_STARTING_MID_VERSE else 1)
     for number, (surah, verse) in enumerate(THUMN_STARTS, start=1)
 ) + (float(_SURAH_OFFSETS[-1]),)
+_SHARED_VERSES = frozenset(_verse_index(*THUMN_STARTS[number - 1]) for number in THUMN_STARTING_MID_VERSE)
 
 
 def _thumn_position(edge: float) -> float:
@@ -132,7 +133,11 @@ def calculate_achievement_thumn(
     end = _verse_index(to_surah, to_verse or WARSH_VERSE_COUNTS[to_surah - 1])
     if end < start:
         start, end = end, start
-    return round(_thumn_position(float(end)) - _thumn_position(float(start - 1)), 4)
+    # A range that begins or stops on a shared verse begins or stops at the Thumn mark inside it.
+    split = start != end
+    start_edge = start - (0.5 if split and start in _SHARED_VERSES else 1.0)
+    end_edge = end - (0.5 if split and end in _SHARED_VERSES else 0.0)
+    return round(_thumn_position(end_edge) - _thumn_position(start_edge), 4)
 
 
 def rank_students_by_thumn(rows, limit: int) -> list[dict]:

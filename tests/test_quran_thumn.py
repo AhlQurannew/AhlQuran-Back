@@ -21,14 +21,17 @@ def test_whole_quran_is_60_hizb():
     assert thumn(1, 1, 114, 6) == 480
 
 
-def test_every_thumn_ending_on_a_verse_counts_exactly_one():
+def thumn_end(number):
+    """Last verse of a Thumn: the shared verse if the next one starts inside it, else the verse before the next."""
+    surah, verse = THUMN_STARTS[number]
+    if number + 1 in THUMN_STARTING_MID_VERSE:
+        return surah, verse
+    return (surah, verse - 1) if verse > 1 else (surah - 1, WARSH_VERSE_COUNTS[surah - 2])
+
+
+def test_every_single_thumn_counts_exactly_one():
     for number in range(1, 480):
-        if number in THUMN_STARTING_MID_VERSE or number + 1 in THUMN_STARTING_MID_VERSE:
-            continue
-        surah, verse = THUMN_STARTS[number - 1]
-        next_surah, next_verse = THUMN_STARTS[number]
-        end_surah, end_verse = (next_surah, next_verse - 1) if next_verse > 1 else (next_surah - 1, WARSH_VERSE_COUNTS[next_surah - 2])
-        assert thumn(surah, verse, end_surah, end_verse) == pytest.approx(1, abs=0.001), number
+        assert thumn(*THUMN_STARTS[number - 1], *thumn_end(number)) == pytest.approx(1, abs=0.001), number
 
 
 def test_first_thumn_runs_from_fatiha_to_baqara_15():

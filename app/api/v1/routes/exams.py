@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.clock import today_algeria
 from app.core.dependencies import require_teacher_or_school_manager
 from app.core.multi_tenancy import get_creator_user_id, get_president_id_for_user
 from app.db.session import get_db
@@ -353,7 +354,7 @@ async def exams_overview(
         _scoped(select(Exam), scope).options(selectinload(Exam.lecture), selectinload(Exam.results))
         .order_by(Exam.exam_date.desc(), Exam.id.desc())
     )).scalars().unique())
-    today = date.today()
+    today = today_algeria()
     past = [e for e in exams if e.exam_date <= today]
     upcoming = sorted((e for e in exams if e.exam_date > today), key=lambda e: e.exam_date)
 

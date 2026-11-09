@@ -10,6 +10,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import selectinload
 
+from app.core.clock import today_algeria
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.user import User, UserRoleEnum
@@ -807,7 +808,7 @@ async def get_platform_statistics(
     )).all())
     attendance_rows = dict((await db.execute(
         select(Attendance.status, func.count(Attendance.id))
-        .where(Attendance.date >= date.today() - timedelta(days=30))
+        .where(Attendance.date >= today_algeria() - timedelta(days=30))
         .group_by(Attendance.status)
     )).all())
     attended = attendance_rows.get(AttendanceStatus.PRESENT, 0) + attendance_rows.get(AttendanceStatus.LATE, 0)
@@ -852,7 +853,7 @@ async def get_academic_statistics(
     from app.models.speciality import Speciality
     from app.models.student import Student
 
-    today = date.today()
+    today = today_algeria()
     since = today - timedelta(days=90)
     graded = (ExamResult.attendance == "present") & ExamResult.mark.is_not(None)
     pct = ExamResult.mark * 100 / Exam.max_mark

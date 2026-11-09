@@ -17,5 +17,7 @@ class AccountPreference(Base):
     admin_id: Mapped[int | None] = mapped_column(ForeignKey("admins.id", ondelete="CASCADE"), nullable=True)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="Africa/Algiers", server_default="Africa/Algiers")
     reduce_motion: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # How the app addresses this person: "male" (سيدي, also when unset) or "female" (سيدتي)
+    honorific: Mapped[str | None] = mapped_column(String(10), nullable=True)
     # Avatar path relative to UPLOAD_DIR (see app/services/profile_images.py)
     profile_image: Mapped[str | None] = mapped_column(String(255), nullable=True)

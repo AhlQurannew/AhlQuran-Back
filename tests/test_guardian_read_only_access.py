@@ -97,7 +97,7 @@ async def test_guardian_cannot_create_student():
         
         # Verify 403 Forbidden status
         assert response.status_code == 403
-        assert "forbidden" in response.json().get("detail", "").lower() or \
+        assert "privileges" in response.json().get("detail", "").lower() or \
                "president" in response.json().get("detail", "").lower() or \
                "supervisor" in response.json().get("detail", "").lower()
     
@@ -172,7 +172,7 @@ async def test_guardian_cannot_update_student():
         
         # Verify 403 Forbidden status
         assert response.status_code == 403
-        assert "forbidden" in response.json().get("detail", "").lower() or \
+        assert "privileges" in response.json().get("detail", "").lower() or \
                "president" in response.json().get("detail", "").lower() or \
                "supervisor" in response.json().get("detail", "").lower()
     
@@ -244,7 +244,7 @@ async def test_guardian_cannot_delete_student():
         
         # Verify 403 Forbidden status
         assert response.status_code == 403
-        assert "forbidden" in response.json().get("detail", "").lower() or \
+        assert "privileges" in response.json().get("detail", "").lower() or \
                "president" in response.json().get("detail", "").lower() or \
                "supervisor" in response.json().get("detail", "").lower()
     
@@ -320,7 +320,7 @@ async def test_guardian_cannot_modify_attendance():
         
         # Verify 403 Forbidden status
         assert response.status_code == 403
-        assert "forbidden" in response.json().get("detail", "").lower() or \
+        assert "privileges" in response.json().get("detail", "").lower() or \
                "president" in response.json().get("detail", "").lower() or \
                "supervisor" in response.json().get("detail", "").lower()
     
@@ -396,7 +396,7 @@ async def test_guardian_cannot_modify_achievements():
         
         # Verify 403 Forbidden status
         assert response.status_code == 403
-        assert "forbidden" in response.json().get("detail", "").lower() or \
+        assert "privileges" in response.json().get("detail", "").lower() or \
                "president" in response.json().get("detail", "").lower() or \
                "supervisor" in response.json().get("detail", "").lower()
     

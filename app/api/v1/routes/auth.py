@@ -1,4 +1,5 @@
 import logging
+from typing import Literal
 from datetime import timedelta
 from zoneinfo import available_timezones
 
@@ -66,6 +67,7 @@ class SettingsPreferencesPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     timezone: str | None = Field(default=None, max_length=64)
     reduce_motion: bool | None = None
+    honorific: Literal["male", "female"] | None = None
 
 
 class PasswordChangeRequest(BaseModel):
@@ -878,6 +880,7 @@ async def get_account_settings(
         "preferences": {
             "timezone": preference.timezone if preference else "Africa/Algiers",
             "reduce_motion": preference.reduce_motion if preference else False,
+            "honorific": preference.honorific if preference else None,
         },
         "has_photo": bool(preference and preference.profile_image),
     }
@@ -1000,7 +1003,7 @@ async def update_account_preferences(
     for field, value in values.items():
         setattr(preference, field, value)
     await db.commit()
-    return {"timezone": preference.timezone, "reduce_motion": preference.reduce_motion}
+    return {"timezone": preference.timezone, "reduce_motion": preference.reduce_motion, "honorific": preference.honorific}
 
 
 def _photo_owner(account: User | Admin) -> str:

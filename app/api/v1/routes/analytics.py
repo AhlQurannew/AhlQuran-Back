@@ -5,6 +5,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import today_algeria
 from app.core.dependencies import require_admin
 from app.db.session import get_db
 from app.services.analytics import ScopeNotFound, build_analytics
@@ -25,7 +26,7 @@ async def get_analytics(
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
-    end = date_to or date.today()
+    end = date_to or today_algeria()
     start = date_from or end - timedelta(days=89)
     if start > end:
         raise HTTPException(status_code=422, detail="date_from must be on or before date_to")

@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import Date, and_, select, func, String, cast
 from sqlalchemy.orm import selectinload
 from datetime import datetime, date
+from app.core.clock import today_algeria
 from app.db.session import get_db
 from app.core.security import get_password_hash
 
@@ -243,23 +244,6 @@ async def get_teachers(
         for teacher, user in teachers_data
     ]
 
-@presidentRouter.get("/students", response_model=list[StudentResponse])
-async def get_students(
-    db: AsyncSession = Depends(get_db),
-    current_user = Depends(require_school_management_access),
-    school_id: int | None = None
-):
-    # Get president ID (handles both president and admin)
-    president_id = await get_current_president_id(current_user, db, school_id)
-
-    # Filter students by president_id
-    result = await db.execute(
-        select(Student).where(Student.president_id == president_id)
-    )
-    students = result.scalars().all()
-    return students
-
-
 @presidentRouter.get("/statistics/summary", response_model=StatsSummaryResponse)
 async def get_statistics_summary(
     db: AsyncSession = Depends(get_db),
@@ -294,7 +278,7 @@ async def get_statistics_summary(
     total_lectures = total_lectures_result.scalar() or 0
 
     # Students present today - date is stored as string in DD-MM-YYYY format
-    today_str = datetime.now().date()
+    today_str = today_algeria()
     present_today_result = await db.execute(
         select(func.count(func.distinct(Attendance.student_id)))
         .join(Student, Attendance.student_id == Student.id)

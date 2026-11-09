@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import Date, String, and_, cast, func, select
 from sqlalchemy.orm import selectinload
 from datetime import date
+from app.core.clock import today_algeria
 from app.db.session import get_db
 from app.models.user import User, UserRoleEnum
 from app.models.teacher import Teacher
@@ -1580,7 +1581,7 @@ async def get_teacher_statistics_summary(
         select(func.count(func.distinct(Attendance.student_id)))
         .join(Student, Student.id == Attendance.student_id)
         .where(
-            Attendance.date == date.today(),
+            Attendance.date == today_algeria(),
             Attendance.lecture_id.in_(lecture_ids),
             Attendance.president_id == teacher.president_id,
             cast(Attendance.status, String) == AttendanceStatus.PRESENT.value,

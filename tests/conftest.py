@@ -2,6 +2,7 @@
 Pytest configuration and fixtures for guardian authentication tests
 """
 import pytest
+import pytest_asyncio
 import asyncio
 import os
 from typing import AsyncGenerator
@@ -35,7 +36,7 @@ def event_loop():
     loop.close()
 
 
-@pytest.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session")
 async def db_engine():
     """Create a test database engine that persists for the entire test session."""
     engine = create_async_engine(
@@ -57,7 +58,7 @@ async def db_engine():
     await engine.dispose()
 
 
-@pytest.fixture(scope="function")
+@pytest_asyncio.fixture(scope="function")
 async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:
     """Create a test database session with automatic cleanup after each test."""
     async_session = async_sessionmaker(
@@ -71,27 +72,16 @@ async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:
         
         # Clean up all tables after each test
         try:
-            # Delete in order to respect foreign key constraints
-            await session.execute(text("DELETE FROM session_participations"))
-            await session.execute(text("DELETE FROM achievements"))
-            await session.execute(text("DELETE FROM attendance"))
-            await session.execute(text("DELETE FROM teacher_attendances"))
-            await session.execute(text("DELETE FROM messages"))
-            await session.execute(text("DELETE FROM sessions"))
-            await session.execute(text("DELETE FROM lectures"))
-            await session.execute(text("DELETE FROM guardians"))
-            await session.execute(text("DELETE FROM students"))
-            await session.execute(text("DELETE FROM teachers"))
-            await session.execute(text("DELETE FROM supervisors"))
-            await session.execute(text("DELETE FROM presidents"))
-            await session.execute(text("DELETE FROM users"))
+            await session.rollback()
+            for table in reversed(Base.metadata.sorted_tables):
+                await session.execute(table.delete())
             await session.commit()
         except Exception:
             await session.rollback()
             raise
 
 
-@pytest.fixture(scope="function")
+@pytest_asyncio.fixture(scope="function")
 async def guardian_user(db_session: AsyncSession) -> User:
     """Create a test guardian user."""
     user = User(
@@ -108,7 +98,7 @@ async def guardian_user(db_session: AsyncSession) -> User:
     return user
 
 
-@pytest.fixture(scope="function")
+@pytest_asyncio.fixture(scope="function")
 async def teacher_user(db_session: AsyncSession) -> User:
     """Create a test teacher user."""
     user = User(
@@ -125,7 +115,7 @@ async def teacher_user(db_session: AsyncSession) -> User:
     return user
 
 
-@pytest.fixture(scope="function")
+@pytest_asyncio.fixture(scope="function")
 async def student_user(db_session: AsyncSession) -> User:
     """Create a test student user."""
     user = User(

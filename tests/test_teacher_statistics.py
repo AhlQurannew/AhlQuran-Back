@@ -41,8 +41,8 @@ async def test_teacher_statistics_return_empty_data_when_no_lectures(db_session,
     await db_session.flush()
 
     summary = await get_teacher_statistics_summary(db_session, teacher_user)
-    attendance = await get_teacher_attendance_trend(db=db_session, current_user=teacher_user)
-    memorizers = await get_teacher_top_memorizers(db=db_session, current_user=teacher_user)
+    attendance = await get_teacher_attendance_trend(limit=10, db=db_session, current_user=teacher_user)
+    memorizers = await get_teacher_top_memorizers(limit=5, db=db_session, current_user=teacher_user)
     distribution = await get_teacher_lecture_distribution(db_session, teacher_user)
 
     assert summary == {
@@ -135,8 +135,8 @@ async def test_teacher_statistics_are_scoped_to_assigned_school_lectures(db_sess
     await db_session.flush()
 
     summary = await get_teacher_statistics_summary(db_session, teacher_user)
-    attendance = await get_teacher_attendance_trend(db=db_session, current_user=teacher_user)
-    memorizers = await get_teacher_top_memorizers(db=db_session, current_user=teacher_user)
+    attendance = await get_teacher_attendance_trend(limit=10, db=db_session, current_user=teacher_user)
+    memorizers = await get_teacher_top_memorizers(limit=5, db=db_session, current_user=teacher_user)
     distribution = await get_teacher_lecture_distribution(db_session, teacher_user)
 
     assert summary["total_students"] == 1

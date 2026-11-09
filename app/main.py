@@ -1,6 +1,8 @@
-from fastapi import FastAPI
+import re
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import JSONResponse, ORJSONResponse
 from contextlib import asynccontextmanager
 import logging
 from fastapi import Depends
@@ -37,6 +39,23 @@ app = FastAPI(
     default_response_class=ORJSONResponse
 )
 
+# Only this project's Vercel deployments (production + previews), not every *.vercel.app site.
+VERCEL_ORIGIN = re.compile(r"^https://ahl-el-quran[a-z0-9-]*\.vercel\.app$")
+
+
+@app.exception_handler(Exception)
+async def unhandled_error(request: Request, exc: Exception) -> JSONResponse:
+    """A crash is answered outside the CORS middleware, so browsers would report it as a CORS failure."""
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path, exc_info=exc)
+    response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    origin = request.headers.get("origin")
+    if origin and (origin in settings.CORS_ORIGINS or VERCEL_ORIGIN.match(origin)):
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Vary"] = "Origin"
+    return response
+
+
 # Login brute-force protection (inner; CORS is added after so it wraps the 429 responses too)
 app.add_middleware(LoginThrottleMiddleware)
 
@@ -44,8 +63,7 @@ app.add_middleware(LoginThrottleMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    # Only this project's Vercel deployments (production + previews), not every *.vercel.app site.
-    allow_origin_regex=r"^https://ahl-el-quran[a-z0-9-]*\.vercel\.app$",
+    allow_origin_regex=VERCEL_ORIGIN.pattern,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

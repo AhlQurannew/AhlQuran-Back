@@ -1,6 +1,10 @@
-from pydantic import BaseModel, Field
-from typing import Optional
+from pydantic import BaseModel, Field, field_validator
+from app.schemas.dates import checked_text_date
+from typing import Literal, Optional
 from datetime import datetime
+
+
+TeacherAttendanceStatus = Literal["present", "late", "absent", "excused"]
 
 
 class TeacherAttendanceBase(BaseModel):
@@ -11,12 +15,28 @@ class TeacherAttendanceBase(BaseModel):
 
 
 class TeacherAttendanceCreate(TeacherAttendanceBase):
+    status: TeacherAttendanceStatus
+
+    @field_validator("date")
+    @classmethod
+    def real_date(cls, value: str) -> str:
+        checked = checked_text_date(value)
+        if checked is None:
+            raise ValueError("Invalid date")
+        return checked
+
     pass
 
 
 class TeacherAttendanceUpdate(BaseModel):
     date: Optional[str] = None
-    status: Optional[str] = None
+
+    @field_validator("date")
+    @classmethod
+    def real_date(cls, value: Optional[str]) -> Optional[str]:
+        return checked_text_date(value)
+
+    status: Optional[TeacherAttendanceStatus] = None
     notes: Optional[str] = None
 
 

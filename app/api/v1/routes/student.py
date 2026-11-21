@@ -1,3 +1,4 @@
+import zlib
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
@@ -274,6 +275,11 @@ async def _resolve_lecture_ids(db: AsyncSession, student_data: StudentCreateFull
     ids = [lecture.lecture_id for lecture in student_data.lectures]
     await _validate_lecture_links(db, ids, president_id)
     return ids
+
+
+async def lock_attendance_slot(db: AsyncSession, owner_id: int, day) -> None:
+    """Saving the same person's day twice at once must update one record, not create two."""
+    await db.execute(select(func.pg_advisory_xact_lock(owner_id, zlib.crc32(str(day).encode()) & 0x7fffffff)))
 
 
 @studentRouter.get("/next-registration-number")
@@ -1036,6 +1042,7 @@ async def save_lecture_daily_attendance(
         if enrolled_ids != set(student_ids):
             raise HTTPException(status_code=400, detail="One or more students are not enrolled in this lecture")
 
+    await lock_attendance_slot(db, lecture_id, payload.date)
     existing_result = await db.execute(
         select(Attendance).where(
             Attendance.lecture_id == lecture_id,
@@ -1123,15 +1130,16 @@ async def create_attendance(
         )
 
     # Check if attendance already exists for this student and date
+    await lock_attendance_slot(db, student_id, attendance_data.date)
     existing_result = await db.execute(
         select(Attendance).where(
             Attendance.student_id == student_id,
             Attendance.lecture_id == attendance_data.lecture_id,
             Attendance.date == attendance_data.date,
             Attendance.president_id == president_id
-        )
+        ).order_by(Attendance.id)
     )
-    existing_attendance = existing_result.scalar_one_or_none()
+    existing_attendance = existing_result.scalars().first()
 
     if existing_attendance:
         # Update existing attendance

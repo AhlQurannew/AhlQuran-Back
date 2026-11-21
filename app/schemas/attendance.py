@@ -1,4 +1,5 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from app.schemas.dates import not_in_future
 from datetime import date as DateType, datetime
 from typing import Optional
 from enum import Enum
@@ -23,6 +24,11 @@ class AttendanceBase(BaseModel):
 class AttendanceCreate(AttendanceBase):
     student_id: Optional[int] = Field(None, example=1)
     lecture_id: int = Field(..., gt=0)
+
+    @field_validator("date")
+    @classmethod
+    def date_not_in_future(cls, value: DateType) -> DateType:
+        return not_in_future(value)
 
 
 class AttendanceUpdate(BaseModel):
@@ -55,3 +61,8 @@ class AttendanceBulkRecord(BaseModel):
 class AttendanceBulkSave(BaseModel):
     date: DateType
     records: list[AttendanceBulkRecord]
+
+    @field_validator("date")
+    @classmethod
+    def date_not_in_future(cls, value: DateType) -> DateType:
+        return not_in_future(value)

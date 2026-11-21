@@ -1,3 +1,4 @@
+import zlib
 from fastapi import APIRouter, HTTPException, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import Date, String, and_, cast, func, select
@@ -143,6 +144,11 @@ def map_student_to_response(student: Student) -> StudentResponse:
         golden=student.Golden,
         is_active=student.user.is_active
     )
+
+
+async def lock_attendance_slot(db: AsyncSession, owner_id: int, day) -> None:
+    """Saving the same person's day twice at once must update one record, not create two."""
+    await db.execute(select(func.pg_advisory_xact_lock(owner_id, zlib.crc32(str(day).encode()) & 0x7fffffff)))
 
 
 @teacherRouter.get("/my-students", response_model=StudentList)
@@ -401,11 +407,6 @@ async def get_my_lectures(
         logger.info(f"  - {lec_response.lecture_name_ar}: student_count={lec_response.student_count}")
     
     return result
-
-
-@teacherRouter.post("/session_creation", response_model=dict)
-async def create_teacher_session():
-    return {"detail": "Session creation endpoint - to be implemented"}
 
 
 # ==================== ADMIN TEACHER MANAGEMENT ====================
@@ -732,14 +733,15 @@ async def create_teacher_attendance(
         )
 
     # Check if attendance already exists for this teacher and date
+    await lock_attendance_slot(db, teacher_id, attendance_data.date)
     existing_result = await db.execute(
         select(TeacherAttendance).where(
             TeacherAttendance.teacher_id == teacher_id,
             TeacherAttendance.date == attendance_data.date,
             TeacherAttendance.president_id == president_id
-        )
+        ).order_by(TeacherAttendance.id)
     )
-    existing_attendance = existing_result.scalar_one_or_none()
+    existing_attendance = existing_result.scalars().first()
 
     if existing_attendance:
         # Update existing attendance
@@ -968,15 +970,16 @@ async def create_student_attendance_as_teacher(
         )
     
     # Check if attendance already exists for this student and date
+    await lock_attendance_slot(db, student_id, attendance_data.date)
     existing_result = await db.execute(
         select(Attendance).where(
             Attendance.student_id == student_id,
             Attendance.lecture_id == attendance_data.lecture_id,
             Attendance.date == attendance_data.date,
             Attendance.president_id == president_id
-        )
+        ).order_by(Attendance.id)
     )
-    existing_attendance = existing_result.scalar_one_or_none()
+    existing_attendance = existing_result.scalars().first()
     
     if existing_attendance:
         # Update existing attendance

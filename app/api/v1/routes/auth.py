@@ -647,6 +647,15 @@ async def get_current_user_info(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if isinstance(current_user, Admin):
+        return {
+            "id": current_user.id,
+            "email": current_user.email,
+            "full_name": current_user.full_name,
+            "role": "INSPECTOR" if current_user.is_inspector else "ADMIN",
+            "is_active": current_user.is_active,
+            "president": None,
+        }
     # Explicit query: a lazy relationship load is not allowed in async code (it crashed with a 500).
     president = await db.scalar(select(President).where(President.user_id == current_user.id))
     return {

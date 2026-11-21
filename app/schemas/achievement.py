@@ -1,7 +1,10 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime
 from typing import Optional
 from enum import Enum
+
+from app.core.quran_thumn import WARSH_VERSE_COUNTS
+from app.schemas.dates import checked_text_date
 
 
 class AchievementType(str, Enum):
@@ -23,11 +26,26 @@ class AchievementBase(BaseModel):
     date: Optional[str] = Field(None, description="Date in DD-MM-YYYY format", example="19-12-2024")
 
 
-class AchievementCreate(AchievementBase):
+class _NewAchievementRules(BaseModel):
+    """Checks for new records only; older ones may hold verse numbers from before the switch to Warsh."""
+
+    @field_validator("date", check_fields=False)
+    @classmethod
+    def real_date(cls, value: Optional[str]) -> Optional[str]:
+        return checked_text_date(value)
+
+    @model_validator(mode="after")
+    def verses_exist(self):
+        if self.from_verse > WARSH_VERSE_COUNTS[self.from_surah - 1] or self.to_verse > WARSH_VERSE_COUNTS[self.to_surah - 1]:
+            raise ValueError("This verse does not exist in the surah")
+        return self
+
+
+class AchievementCreate(_NewAchievementRules, AchievementBase):
     student_id: Optional[int] = Field(None, gt=0, example=1)
 
 
-class AchievementBulkCreate(AchievementBase):
+class AchievementBulkCreate(_NewAchievementRules, AchievementBase):
     student_ids: list[int] = Field(..., min_length=1, max_length=10000)
     lecture_id: Optional[int] = Field(None, gt=0)
 
@@ -40,6 +58,11 @@ class AchievementUpdate(BaseModel):
     note: Optional[str] = None
     achievement_type: Optional[AchievementType] = None
     date: Optional[str] = Field(None, description="Date in DD-MM-YYYY format")
+
+    @field_validator("date")
+    @classmethod
+    def real_date(cls, value: Optional[str]) -> Optional[str]:
+        return checked_text_date(value)
 
 
 class AchievementResponse(AchievementBase):

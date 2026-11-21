@@ -166,7 +166,6 @@ async def list_all_users(
                 "lastname": user.lastname,
                 "role": user.role.value,
                 "is_active": user.is_active,
-                "created_at": user.created_at.isoformat()
             }
             for user in users
         ]

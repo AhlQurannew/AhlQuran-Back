@@ -930,6 +930,24 @@ async def get_academic_statistics(
     }
 
 
+async def school_director_names(db: AsyncSession, school_ids: list[int]) -> dict[int, str]:
+    """The person who runs each school (its chief supervisor), not the internal school account."""
+    from app.models.chief_supervisor import ChiefSupervisor
+
+    if not school_ids:
+        return {}
+    result = await db.execute(
+        select(ChiefSupervisor.president_id, User.firstname, User.lastname)
+        .join(User, ChiefSupervisor.user_id == User.id)
+        .where(ChiefSupervisor.president_id.in_(school_ids))
+        .order_by(ChiefSupervisor.id)
+    )
+    names: dict[int, str] = {}
+    for school_id, firstname, lastname in result:
+        names.setdefault(school_id, f"{firstname or ''} {lastname or ''}".strip())
+    return names
+
+
 @adminRouter.get("/statistics/schools")
 async def get_schools_statistics(
     db: AsyncSession = Depends(get_db),
@@ -966,8 +984,10 @@ async def get_schools_statistics(
     )
     
     schools_list = []
-    for row in result_schools:
-        president_name = f"{row.firstname or ''} {row.lastname or ''}".strip()
+    rows = result_schools.all()
+    directors = await school_director_names(db, [row.school_id for row in rows])
+    for row in rows:
+        president_name = directors.get(row.school_id) or f"{row.firstname or ''} {row.lastname or ''}".strip()
         student_count = row.student_count
         percentage = (student_count / total_students * 100) if total_students > 0 else 0
         
@@ -1012,12 +1032,13 @@ async def get_school_president(
         )
     
     president, user = row
-    
+    directors = await school_director_names(db, [president.id])
+
     return {
         "president_id": president.id,
         "user_id": user.id,
         "school_name": president.school_name,
-        "president_name": f"{user.firstname or ''} {user.lastname or ''}".strip(),
+        "president_name": directors.get(president.id) or f"{user.firstname or ''} {user.lastname or ''}".strip(),
         "email": user.email,
         "phone_number": president.phone_number
     }

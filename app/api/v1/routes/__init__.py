@@ -16,6 +16,7 @@ from .specialities import specialityRouter
 from .exams import examRouter
 from .inspectors import inspectorRouter
 from .admins import adminAccountRouter
+from .backup import backupRouter
 from .accounts import accountRouter
 from .ws_messages import ws_router
 
@@ -26,6 +27,7 @@ def register_routes(app):
         (analyticsRouter, "/admin/analytics", ["Admin analytics"]),
         (inspectorRouter, "/admin/inspectors", ["Inspectors"]),
         (adminAccountRouter, "/admin/admins", ["Administrators"]),
+        (backupRouter, "/admin/backup", ["Backup"]),
         (accountRouter, "/accounts", ["Accounts"]),
         (presidentRouter, "/president", ["President"]),
         (supervisorRouter, "/supervisor", ["Supervisor"]),

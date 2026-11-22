@@ -2,22 +2,24 @@ from pydantic import BaseModel, EmailStr
 from datetime import datetime
 from typing import Optional
 
+from app.schemas.fields import GuardianName, LoginEmail, NewPassword, OptionalNewPassword, PersonName
+
 
 class SupervisorBase(BaseModel):
-    firstname: str
-    lastname: str
-    email: EmailStr
+    firstname: PersonName
+    lastname: PersonName
+    email: LoginEmail
 
 
 class SupervisorCreate(SupervisorBase):
-    password: str
+    password: NewPassword
 
 
 class SupervisorUpdate(BaseModel):
-    firstname: Optional[str] = None
-    lastname: Optional[str] = None
-    email: Optional[EmailStr] = None
-    password: Optional[str] = None  # Optional password for reset
+    firstname: Optional[PersonName] = None
+    lastname: Optional[PersonName] = None
+    email: Optional[LoginEmail] = None
+    password: OptionalNewPassword = None  # Optional password for reset
 
 
 class SupervisorResponse(BaseModel):

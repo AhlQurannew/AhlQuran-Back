@@ -2,6 +2,8 @@ from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
 from typing import Optional
 
+from app.schemas.fields import GuardianName, LoginEmail, NewPassword, OptionalNewPassword, PersonName
+
 
 class TeacherProfile(BaseModel):
     # Empty registration_number -> generated server-side (T<year>-0001); otherwise must be unique.
@@ -15,21 +17,21 @@ class TeacherProfile(BaseModel):
 
 
 class TeacherBase(BaseModel):
-    firstname: str
-    lastname: str
-    email: EmailStr
+    firstname: PersonName
+    lastname: PersonName
+    email: LoginEmail
     riwaya: str
 
 class TeacherCreate(TeacherBase, TeacherProfile):
-    password: str
+    password: NewPassword
 
 
 class TeacherUpdate(TeacherProfile):
-    firstname: Optional[str] = None
-    lastname: Optional[str] = None
-    email: Optional[EmailStr] = None
+    firstname: Optional[PersonName] = None
+    lastname: Optional[PersonName] = None
+    email: Optional[LoginEmail] = None
     riwaya: Optional[str] = None
-    password: Optional[str] = None  # Optional password for reset
+    password: OptionalNewPassword = None  # Optional password for reset
 
 
 class TeacherResponse(BaseModel):

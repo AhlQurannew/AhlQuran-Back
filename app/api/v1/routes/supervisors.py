@@ -42,7 +42,7 @@ async def create_supervisor(
 
     # Check if email already exists
     result = await db.execute(
-        select(User).where(User.email == supervisor_data.email)
+        select(User).where(func.lower(User.email) == str(supervisor_data.email).strip().lower())
     )
     existing_user = result.scalar_one_or_none()
 
@@ -208,7 +208,7 @@ async def update_supervisor(
     if "email" in update_data:
         # Check if new email is already taken
         email_result = await db.execute(
-            select(User).where(User.email == update_data["email"], User.id != supervisor.user.id)
+            select(User).where(func.lower(User.email) == str(update_data["email"]).strip().lower(), User.id != supervisor.user.id)
         )
         if email_result.scalar_one_or_none():
             raise HTTPException(

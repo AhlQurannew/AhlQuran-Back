@@ -38,6 +38,9 @@ class _NewAchievementRules(BaseModel):
     def verses_exist(self):
         if self.from_verse > WARSH_VERSE_COUNTS[self.from_surah - 1] or self.to_verse > WARSH_VERSE_COUNTS[self.to_surah - 1]:
             raise ValueError("This verse does not exist in the surah")
+        # A surah may be listed backwards (reverse memorization), but not its verses.
+        if self.from_surah == self.to_surah and self.to_verse < self.from_verse:
+            raise ValueError("The last verse comes before the first verse")
         return self
 
 

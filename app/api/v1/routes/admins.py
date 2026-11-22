@@ -19,6 +19,7 @@ from app.core.dependencies import require_super_admin
 from app.core.security import get_password_hash
 from app.db.session import get_db
 from app.models.admin import Admin
+from app.services.account_files import admin_cleanup_targets as _schools_with_messages_of, clean_after_admin_delete as _clean_after_admin_delete
 
 logger = logging.getLogger(__name__)
 adminAccountRouter = APIRouter()
@@ -152,6 +153,8 @@ async def delete_admin(admin_id: int, db: AsyncSession = Depends(get_db), admin=
     target = await _manageable(db, admin_id, admin)
     # Its accounts move up to its creator; the foreign key would otherwise delete them all.
     await db.execute(update(Admin).where(Admin.created_by_id == target.id).values(created_by_id=target.created_by_id))
+    schools = await _schools_with_messages_of(db, target.id)
     await db.delete(target)
     await db.commit()
+    await _clean_after_admin_delete(db, target.id, schools)
     logger.info("Administrator %s deleted by admin %s", admin_id, admin.id)

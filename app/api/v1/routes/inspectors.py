@@ -15,6 +15,7 @@ from app.core.dependencies import require_super_admin
 from app.core.security import get_password_hash
 from app.db.session import get_db
 from app.models.admin import Admin
+from app.services.account_files import admin_cleanup_targets as _schools_with_messages_of, clean_after_admin_delete as _clean_after_admin_delete
 
 logger = logging.getLogger(__name__)
 inspectorRouter = APIRouter()
@@ -156,6 +157,8 @@ async def update_inspector(inspector_id: int, data: InspectorUpdate, db: AsyncSe
 @inspectorRouter.delete("/{inspector_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_inspector(inspector_id: int, db: AsyncSession = Depends(get_db), admin=Depends(require_super_admin)):
     inspector = await _get(db, inspector_id)
+    schools = await _schools_with_messages_of(db, inspector.id)
     await db.delete(inspector)
     await db.commit()
+    await _clean_after_admin_delete(db, inspector.id, schools)
     logger.info("Inspector %s deleted by admin %s", inspector_id, admin.id)

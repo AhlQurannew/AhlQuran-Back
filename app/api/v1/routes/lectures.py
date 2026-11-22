@@ -435,7 +435,21 @@ async def delete_lecture(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Lecture with id {lecture_id} not found"
         )
-    
+
+    # Marks are school records: a circle whose exams were graded cannot be deleted with them.
+    from app.models.exam import Exam, ExamResult
+    graded = await db.scalar(
+        select(ExamResult.id)
+        .join(Exam, Exam.id == ExamResult.exam_id)
+        .where(Exam.lecture_id == lecture_id, ExamResult.mark.is_not(None))
+        .limit(1)
+    )
+    if graded is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This circle has graded exams and cannot be deleted",
+        )
+
     await db.delete(lecture)
     await db.commit()
     

@@ -2,11 +2,13 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional
 from datetime import datetime
 
+from app.schemas.fields import GuardianName, LoginEmail, NewPassword, OptionalNewPassword, PersonName
+
 
 class GuardianInfo(BaseModel):
     """Guardian information schema"""
-    first_name: str
-    last_name: str
+    first_name: GuardianName
+    last_name: GuardianName
     relationship: str  # Required: relationship to student
     date_of_birth: Optional[str] = None
     phone_number: Optional[str] = None
@@ -28,7 +30,7 @@ def _normalize_username(value: str) -> str:
 class AccountInfo(BaseModel):
     """Account information for guardian"""
     username: str
-    password: str
+    password: NewPassword
 
     @field_validator("username")
     @classmethod
@@ -39,7 +41,7 @@ class AccountInfo(BaseModel):
 class AccountInfoUpdate(BaseModel):
     """Account information for guardian update (password optional)"""
     username: str
-    password: Optional[str] = None
+    password: OptionalNewPassword = None
 
     @field_validator("username")
     @classmethod

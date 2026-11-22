@@ -35,7 +35,7 @@ from app.core.dependencies import (
 )
 from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 from app.core.quran_thumn import calculate_achievement_thumn, rank_students_by_thumn
-from app.core.account_lifecycle import restore_orphaned_account
+from app.core.account_lifecycle import restore_orphaned_account, student_in_lecture_or_its_history
 
 
 presidentRouter = APIRouter()
@@ -389,17 +389,7 @@ async def get_attendance_statistics(
         raise HTTPException(status_code=404, detail="Lecture not found")
 
     if student_id is not None:
-        enrollment_result = await db.execute(
-            select(SessionParticipation.id)
-            .join(Student, Student.id == SessionParticipation.student_id)
-            .where(
-                SessionParticipation.lecture_id == lecture_id,
-                SessionParticipation.student_id == student_id,
-                Student.president_id == president_id,
-            )
-            .limit(1)
-        )
-        if enrollment_result.scalar_one_or_none() is None:
+        if not await student_in_lecture_or_its_history(db, student_id, lecture_id, president_id):
             raise HTTPException(status_code=404, detail="Student is not enrolled in this lecture")
 
     grouped_result = await db.execute(
@@ -538,7 +528,9 @@ async def _get_school_statistics_scope(
     president_id: int,
     lecture_id: int | None,
     student_id: int | None,
+    with_attendance_history: bool = False,
 ):
+    """Students counted for a lecture: its members, plus (for attendance) former members who have records there."""
     enrolled_student_ids = None
     if lecture_id is not None:
         lecture_result = await db.execute(
@@ -558,6 +550,13 @@ async def _get_school_statistics_scope(
             )
             .distinct()
         )
+        if with_attendance_history:
+            enrolled_student_ids = enrolled_student_ids.union(
+                select(Attendance.student_id).where(
+                    Attendance.lecture_id == lecture_id,
+                    Attendance.president_id == president_id,
+                )
+            )
 
     if student_id is not None:
         student_query = select(Student.id).where(
@@ -571,6 +570,31 @@ async def _get_school_statistics_scope(
             raise HTTPException(status_code=404, detail="Student not found in the selected school or lecture")
 
     return enrolled_student_ids
+
+
+@presidentRouter.get("/statistics/lecture-former-students")
+async def get_lecture_former_students(
+    lecture_id: int,
+    school_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_school_management_access),
+):
+    """Students who have attendance in a lecture but are no longer enrolled in it (its history)."""
+    president_id = await get_current_president_id(current_user, db, school_id)
+    if await db.scalar(select(Lecture.id).where(Lecture.id == lecture_id, Lecture.president_id == president_id)) is None:
+        raise HTTPException(status_code=404, detail="Lecture not found")
+    current = select(SessionParticipation.student_id).where(SessionParticipation.lecture_id == lecture_id)
+    rows = await db.execute(
+        select(Student.id, User.firstname, User.lastname)
+        .join(User, User.id == Student.user_id)
+        .where(
+            Student.president_id == president_id,
+            Student.id.in_(select(Attendance.student_id).where(Attendance.lecture_id == lecture_id, Attendance.president_id == president_id)),
+            Student.id.not_in(current),
+        )
+        .order_by(User.firstname, User.lastname)
+    )
+    return [{"id": sid, "firstname": first, "lastname": last} for sid, first, last in rows]
 
 
 @presidentRouter.get("/statistics/attendance-breakdown")
@@ -588,7 +612,7 @@ async def get_attendance_breakdown(
 
     president_id = await get_current_president_id(current_user, db, school_id)
     enrolled_student_ids = await _get_school_statistics_scope(
-        db, president_id, lecture_id, student_id
+        db, president_id, lecture_id, student_id, with_attendance_history=True
     )
     query = (
         select(Attendance.status, func.count(Attendance.id))

@@ -57,7 +57,8 @@ async def unhandled_error(request: Request, exc: Exception) -> JSONResponse:
     return response
 
 
-BAD_VALUE_ERROR = re.compile(r"DataError|InvalidRowCount|CharacterNotInRepertoire|UntranslatableCharacter")
+# Postgres "data exception" class (SQLSTATE 22xxx): value too long, out of range, bad character...
+BAD_VALUE_ERROR = re.compile(r"DataError|InvalidRowCount|CharacterNotInRepertoire|UntranslatableCharacter|DataRightTruncation|OutOfRange|InvalidTextRepresentation|InvalidDatetimeFormat")
 MAX_DATABASE_ID = 2147483647
 
 
@@ -84,7 +85,7 @@ async def duplicate_or_conflict(request: Request, exc: IntegrityError) -> JSONRe
 @app.exception_handler(DBAPIError)
 async def value_rejected_by_database(request: Request, exc: DBAPIError) -> JSONResponse:
     """Values the database cannot store (a number too large, a NUL character) are bad input, not a crash."""
-    if BAD_VALUE_ERROR.search(str(exc)):
+    if str(getattr(exc.orig, "sqlstate", "") or getattr(exc.orig, "pgcode", "") or "").startswith("22") or BAD_VALUE_ERROR.search(str(exc)):
         return JSONResponse(status_code=422, content={"detail": "Invalid value"})
     logger.exception("Database error on %s %s", request.method, request.url.path, exc_info=exc)
     return await unhandled_error(request, exc)

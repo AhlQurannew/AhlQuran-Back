@@ -32,7 +32,7 @@ from app.core.dependencies import (
     require_school_management_access,
     require_teacher_or_school_manager,
 )
-from app.core.account_lifecycle import reset_user_password, restore_orphaned_account
+from app.core.account_lifecycle import reset_user_password, restore_orphaned_account, student_in_lecture_or_its_history
 from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 from app.core.security import get_password_hash
 from app.core.config import settings
@@ -45,6 +45,7 @@ from app.services.profile_images import (
 )
 
 import logging
+from app.services.account_files import attachment_paths, remove_attachment_files, remove_student_files, remove_user_files
 logger = logging.getLogger(__name__)
 
 studentRouter = APIRouter()
@@ -563,7 +564,7 @@ async def update_student(
     if "email" in update_data:
         # Check if new email is already taken
         email_result = await db.execute(
-            select(User).where(User.email == update_data["email"], User.id != student.user.id)
+            select(User).where(func.lower(User.email) == str(update_data["email"]).strip().lower(), User.id != student.user.id)
         )
         if email_result.scalar_one_or_none():
             raise HTTPException(
@@ -633,7 +634,7 @@ async def update_student_full(
     if student_data.contactInfo.email != student.user.email:
         email_result = await db.execute(
             select(User).where(
-                User.email == student_data.contactInfo.email,
+                func.lower(User.email) == (student_data.contactInfo.email or "").lower(),
                 User.id != student.user.id
             )
         )
@@ -731,10 +732,15 @@ async def delete_student(
     student = await _get_accessible_student(student_id, current_user, db, school_id)
 
     profile_image = student.profile_image
+    user_id = student.user.id
+    attached = await attachment_paths(db, user_id=user_id)
     # Remove the account itself; its profile and student-owned records cascade from it.
     await db.delete(student.user)
     await db.commit()
     await run_in_threadpool(remove_student_profile_image, profile_image)
+    await run_in_threadpool(remove_user_files, user_id)
+    await run_in_threadpool(remove_student_files, student_id)
+    await run_in_threadpool(remove_attachment_files, attached)
 
     logger.info(f"Student {student_id} deleted by user {current_user.id}")
 
@@ -1201,17 +1207,7 @@ async def get_student_attendance(
         )
 
     await _ensure_teacher_owns_lecture(current_user, lecture_id, db)
-    enrollment_result = await db.execute(
-        select(SessionParticipation.id)
-        .join(Lecture, SessionParticipation.lecture_id == Lecture.id)
-        .where(
-            SessionParticipation.student_id == student_id,
-            SessionParticipation.lecture_id == lecture_id,
-            Lecture.president_id == president_id,
-        )
-        .limit(1)
-    )
-    if enrollment_result.scalar_one_or_none() is None:
+    if not await student_in_lecture_or_its_history(db, student_id, lecture_id, president_id):
         raise HTTPException(status_code=404, detail="Student is not enrolled in this lecture")
 
     # Build query with president_id filter for multi-tenancy

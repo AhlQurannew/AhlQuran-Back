@@ -59,7 +59,7 @@ def store_profile_image(raw: bytes, directory: Path, max_side: int = 1024) -> st
             finally:
                 temporary.unlink(missing_ok=True)
             return relative_path.as_posix()
-    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError, Image.DecompressionBombError) as exc:
         raise ValueError("The uploaded file is not a valid supported image") from exc
 
 

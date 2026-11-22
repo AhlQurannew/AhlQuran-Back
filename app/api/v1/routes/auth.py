@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
+from app.core.account_lifecycle import ensure_school_active
 from app.core.dependencies import get_current_user, require_admin
 from app.core.security import (
     create_access_token,
@@ -100,7 +101,7 @@ async def president_register(
 ):
 
     result = await db.execute(
-        select(User).where(User.email == data.email)
+        select(User).where(func.lower(User.email) == str(data.email).strip().lower())
     )
     existing_user = result.scalar_one_or_none()
     
@@ -154,7 +155,7 @@ async def president_login(
     # Find user by email AND role
     result = await db.execute(
         select(User).where(
-            User.email == form_data.email,
+            func.lower(User.email) == form_data.email.strip().lower(),
             User.role == UserRoleEnum.PRESIDENT
         )
     )
@@ -239,7 +240,7 @@ async def supervisor_login(
     # Find user by email AND role
     result = await db.execute(
         select(User).where(
-            User.email == form_data.email,
+            func.lower(User.email) == form_data.email.strip().lower(),
             User.role.in_((UserRoleEnum.SUPERVISOR, UserRoleEnum.CHIEF_SUPERVISOR)),
         )
     )
@@ -269,6 +270,7 @@ async def supervisor_login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is inactive. Please contact the administrator."
         )
+    await ensure_school_active(db, user)
 
     access_token = create_access_token(
         data={
@@ -361,6 +363,7 @@ async def teacher_login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is inactive. Please contact the administrator."
         )
+    await ensure_school_active(db, user)
 
     # Get teacher details
     teacher_result = await db.execute(
@@ -427,13 +430,14 @@ async def student_login(
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(User).where(User.email == form_data.email, User.role == UserRoleEnum.STUDENT))
+    result = await db.execute(select(User).where(func.lower(User.email) == form_data.email.strip().lower(), User.role == UserRoleEnum.STUDENT))
     user = result.scalar_one_or_none()
     if user is None or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password", headers={"WWW-Authenticate": "Bearer"})
     await upgrade_password_if_needed(db, user, form_data.password)
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is inactive. Please contact your school administrator.")
+    await ensure_school_active(db, user)
 
     token_data = {"email": user.email, "user_id": user.id, "role": user.role.value, "type": "user", "ver": user.auth_version}
     access_token = create_access_token(token_data, expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
@@ -491,6 +495,7 @@ async def guardian_login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is inactive. Please contact the administrator."
         )
+    await ensure_school_active(db, user)
 
     # Get guardian details
     guardian_result = await db.execute(
@@ -791,6 +796,7 @@ async def refresh_token(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is inactive",
         )
+    await ensure_school_active(db, user)
     
     # Create new access token with same data as original
     new_access_token = create_access_token(

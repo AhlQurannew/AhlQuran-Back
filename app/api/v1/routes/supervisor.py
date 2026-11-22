@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from app.db.session import get_db
 from app.models.user import User, UserRoleEnum
@@ -13,6 +13,8 @@ from app.core.account_lifecycle import reset_user_password, restore_orphaned_acc
 from app.core.multi_tenancy import get_president_id_for_user, get_creator_user_id
 from app.core.security import get_password_hash
 import logging
+from fastapi.concurrency import run_in_threadpool
+from app.services.account_files import attachment_paths, remove_attachment_files, remove_user_files
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +190,7 @@ async def update_supervisor(
     if "email" in update_data:
         # Check if new email is already taken
         email_result = await db.execute(
-            select(User).where(User.email == update_data["email"], User.id != supervisor.user.id)
+            select(User).where(func.lower(User.email) == update_data["email"].lower(), User.id != supervisor.user.id)
         )
         if email_result.scalar_one_or_none():
             raise HTTPException(
@@ -237,8 +239,12 @@ async def delete_supervisor(
     _ensure_regular_supervisor_target(supervisor, current_user)
 
     # Remove the account itself; its profile is a dependent record of User.
+    user_id = supervisor.user.id
+    attached = await attachment_paths(db, user_id=user_id)
     await db.delete(supervisor.user)
     await db.commit()
+    await run_in_threadpool(remove_user_files, user_id)
+    await run_in_threadpool(remove_attachment_files, attached)
 
     logger.info(f"Supervisor {supervisor_id} deleted by user {current_user.id}")
 

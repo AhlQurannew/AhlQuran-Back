@@ -2,11 +2,13 @@ from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from typing import Literal, Optional, List, Any
 from datetime import date
 
+from app.schemas.fields import LoginEmail, PersonName
+
 class PersonalInfo(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     
-    first_name_ar: str = Field(alias="firstNameAr")
-    last_name_ar: str = Field(alias="lastNameAr")
+    first_name_ar: PersonName = Field(alias="firstNameAr")
+    last_name_ar: PersonName = Field(alias="lastNameAr")
     first_name_en: Optional[str] = Field(None, alias="firstNameEn")
     last_name_en: Optional[str] = Field(None, alias="lastNameEn")
     sex: Optional[str] = None
@@ -28,7 +30,7 @@ class ContactInfo(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     
     phone_number: Optional[str] = Field(None, alias="phoneNumber")
-    email: Optional[EmailStr] = None
+    email: Optional[LoginEmail] = None
 
 class GuardianInfo(BaseModel):
     model_config = ConfigDict(populate_by_name=True)

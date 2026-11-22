@@ -112,6 +112,9 @@ async def get_current_user(
             detail="Account is inactive. Please wait for administrator approval."
         )
 
+    from app.core.account_lifecycle import ensure_school_active
+    await ensure_school_active(db, user)
+
     return user
 
 # ==================== ROLE-BASED DEPENDENCIES ====================

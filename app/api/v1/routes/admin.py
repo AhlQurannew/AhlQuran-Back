@@ -16,6 +16,7 @@ from app.db.session import get_db
 from app.models.user import User, UserRoleEnum
 from app.models.president import President
 from app.core.dependencies import require_admin
+from app.schemas.fields import check_new_password
 import logging
 
 
@@ -137,8 +138,11 @@ async def reject_president(
         )
     
     # Delete the user (cascade will delete president profile)
+    rejected_id = user.id
     await db.delete(user)
     await db.commit()
+    from app.services.account_files import remove_user_files
+    await run_in_threadpool(remove_user_files, rejected_id)
     
     return None  # 204 No Content
 
@@ -440,9 +444,12 @@ async def update_school(
             target_user.lastname = school_data['president_lastname']
         
         if 'email' in school_data:
+            school_data['email'] = str(school_data['email'] or '').strip().lower()
+            if not school_data['email']:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is required")
             # Check if new email already exists on a different user
             email_check = await db.execute(
-                select(User).where(User.email == school_data['email']).where(User.id != target_user.id)
+                select(User).where(func.lower(User.email) == school_data['email']).where(User.id != target_user.id)
             )
             existing_user = email_check.scalar_one_or_none()
             
@@ -455,8 +462,12 @@ async def update_school(
             target_user.email = school_data['email']
         
         # Update password if provided
-        if 'password' in school_data and school_data['password']:
+        if 'password' in school_data and str(school_data['password'] or '').strip():
             from app.core.account_lifecycle import reset_user_password
+            try:
+                check_new_password(str(school_data['password']))
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
             reset_user_password(target_user, school_data['password'])
         
         await db.commit()
@@ -564,6 +575,7 @@ async def delete_school(
         # Delete the president directly (foreign keys with ondelete="CASCADE" in PostgreSQL 
         # will cascade-delete all school entities)
         school_image = president.image_path
+        school_student_ids = list((await db.execute(select(Student.id).where(Student.president_id == school_id))).scalars())
         await db.delete(president)
         await db.flush()
         
@@ -576,6 +588,8 @@ async def delete_school(
         if school_image:
             from app.services.profile_images import remove_profile_image
             await run_in_threadpool(remove_profile_image, school_image)
+        from app.services.account_files import remove_school_files
+        await run_in_threadpool(remove_school_files, school_id, list(user_ids_to_delete), school_student_ids)
         logger.info(f"[DELETE SCHOOL] School '{school_name}' (ID: {school_id}) and {len(user_ids_to_delete)} users deleted successfully")
         
         return {
@@ -619,6 +633,9 @@ async def create_school(
     try:
         # Validate required fields
         required_fields = ['school_name', 'chief_supervisor_firstname', 'chief_supervisor_lastname', 'email', 'password']
+        for field in ('school_name', 'chief_supervisor_firstname', 'chief_supervisor_lastname'):
+            if isinstance(school_data.get(field), str):
+                school_data[field] = school_data[field].strip()
         missing_fields = [field for field in required_fields if not school_data.get(field)]
         
         if missing_fields:
@@ -626,6 +643,13 @@ async def create_school(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Missing required fields: {', '.join(missing_fields)}"
             )
+        for field in ('chief_supervisor_firstname', 'chief_supervisor_lastname'):
+            if len(str(school_data[field])) > 50:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="This field must not exceed 50 characters")
+        try:
+            check_new_password(str(school_data['password']))
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
         
         school_email = str(school_data['email']).strip().lower()
         if not school_email:

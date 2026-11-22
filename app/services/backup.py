@@ -23,6 +23,8 @@ FORMAT_VERSION = 1
 SKIP_TABLES = {"alembic_version"}
 MAX_UNPACKED_BYTES = 1024 * 1024 * 1024  # refuse archives that would expand past 1 GB
 INSERT_CHUNK = 500
+# Versions whose tables and columns are identical (only indexes differ): their backups restore as is.
+SAME_TABLES_AS = {"021": {"020"}}
 
 
 class BackupError(ValueError):
@@ -123,7 +125,7 @@ def read_backup(raw: bytes) -> tuple[dict, dict[str, bytes]]:
 async def restore_backup(conn: AsyncConnection, data: dict) -> dict[str, int]:
     """Replace every table's content with the backup's. Runs inside the caller's transaction."""
     current = await _schema_version(conn)
-    if data.get("schema_version") != current:
+    if data.get("schema_version") != current and data.get("schema_version") not in SAME_TABLES_AS.get(current, set()):
         raise BackupError(f"This backup was made with database version {data.get('schema_version')}; the server is at {current}")
     tables = await _tables(conn)
     by_name = {table.name: table for table in tables}

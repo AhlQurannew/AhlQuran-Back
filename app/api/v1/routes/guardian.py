@@ -32,6 +32,8 @@ from datetime import date, datetime
 from fastapi import Query
 import logging
 import math
+from fastapi.concurrency import run_in_threadpool
+from app.services.account_files import attachment_paths, remove_attachment_files, remove_user_files
 
 logger = logging.getLogger(__name__)
 
@@ -1191,8 +1193,12 @@ async def delete_guardian(
         )
     
     # Delete the account so its unique email can be registered again.
+    user_id = guardian.user.id
+    attached = await attachment_paths(db, user_id=user_id)
     await db.delete(guardian.user)
     await db.commit()
+    await run_in_threadpool(remove_user_files, user_id)
+    await run_in_threadpool(remove_attachment_files, attached)
     
     logger.info(f"Guardian {guardian_id} deleted by user {current_user.id}")
     

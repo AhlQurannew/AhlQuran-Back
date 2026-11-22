@@ -39,6 +39,8 @@ teacherRouter = APIRouter()
 from app.models.student import Student
 from app.models.sessionParticipation import SessionParticipation
 from app.schemas.student import StudentResponse, StudentList
+from fastapi.concurrency import run_in_threadpool
+from app.services.account_files import attachment_paths, remove_attachment_files, remove_user_files
 
 
 def map_student_to_response(student: Student) -> StudentResponse:
@@ -616,7 +618,7 @@ async def update_teacher(
     if "email" in update_data:
         # Check if new email is already taken
         email_result = await db.execute(
-            select(User).where(User.email == update_data["email"], User.id != teacher.user.id)
+            select(User).where(func.lower(User.email) == update_data["email"].lower(), User.id != teacher.user.id)
         )
         if email_result.scalar_one_or_none():
             raise HTTPException(
@@ -688,8 +690,12 @@ async def delete_teacher(
         )
 
     # Remove the account itself; its profile is a dependent record of User.
+    user_id = teacher.user.id
+    attached = await attachment_paths(db, user_id=user_id)
     await db.delete(teacher.user)
     await db.commit()
+    await run_in_threadpool(remove_user_files, user_id)
+    await run_in_threadpool(remove_attachment_files, attached)
     
     logger.info(f"Teacher {teacher_id} deleted by user {current_user.id}")
 

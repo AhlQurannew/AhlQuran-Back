@@ -227,7 +227,7 @@ def _detect_and_validate(raw: bytes, filename: str) -> tuple[str, str, bytes]:
                     return content_type, extension, raw
     except ValueError:
         raise
-    except (UnidentifiedImageError, OSError, Image.DecompressionBombError, Image.DecompressionBombWarning):
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning):
         pass
 
     trimmed = raw.lstrip()

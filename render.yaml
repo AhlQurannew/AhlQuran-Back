@@ -7,7 +7,7 @@ services:
     plan: free
     branch: main
     autoDeploy: true
-    healthCheckPath: /health/ready
+    healthCheckPath: /health/live
     # Single free instance: start.sh migrates, makes sure the admin exists, then serves on Render's $PORT.
     dockerCommand: sh /app/start.sh
     envVars:

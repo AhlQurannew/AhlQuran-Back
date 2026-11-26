@@ -161,6 +161,9 @@ async def president_login(
         )
     )
     user = result.scalar_one_or_none()
+    # Each school's internal placeholder account (system.*@school.internal) is never a sign-in account.
+    if user is not None and user.email.lower().endswith("@school.internal"):
+        user = None
     
     if not user:
         burn_password_check(form_data.password)

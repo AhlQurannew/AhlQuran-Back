@@ -16,8 +16,9 @@ from app.db.session import get_db
 from app.models.user import User, UserRoleEnum
 from app.models.president import President
 from app.core.dependencies import require_admin
-from app.schemas.fields import check_new_password
+from app.schemas.fields import check_new_password, validate_login_email
 import logging
+import secrets
 
 
 adminRouter = APIRouter()
@@ -444,7 +445,10 @@ async def update_school(
             target_user.lastname = school_data['president_lastname']
         
         if 'email' in school_data:
-            school_data['email'] = str(school_data['email'] or '').strip().lower()
+            try:
+                school_data['email'] = validate_login_email(str(school_data['email'] or '').strip()) if school_data['email'] else ''
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
             if not school_data['email']:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is required")
             # Check if new email already exists on a different user
@@ -651,12 +655,10 @@ async def create_school(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
         
-        school_email = str(school_data['email']).strip().lower()
-        if not school_email:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email is required"
-            )
+        try:
+            school_email = validate_login_email(school_data['email'])
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
         # Emails are treated case-insensitively and stored in a normalized form.
         result = await db.execute(
@@ -676,7 +678,8 @@ async def create_school(
             firstname="System",
             lastname="Admin",
             email=f"system.{datetime.utcnow().timestamp()}@school.internal",
-            hashed_password=get_password_hash("system_placeholder"),
+            # Internal account: nobody signs in with it, so it gets a random, discarded password.
+            hashed_password=get_password_hash(secrets.token_urlsafe(32)),
             role=UserRoleEnum.PRESIDENT,
             is_active=True
         )

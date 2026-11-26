@@ -1,7 +1,7 @@
 """Shared input rules for account forms: login emails, person names and new passwords."""
 from typing import Annotated, Optional
 
-from pydantic import AfterValidator, BeforeValidator, EmailStr
+from pydantic import AfterValidator, BeforeValidator, EmailStr, TypeAdapter, ValidationError
 
 MIN_ACCOUNT_PASSWORD = 8
 MAX_PASSWORD_BYTES = 72  # bcrypt ignores anything after 72 bytes
@@ -44,3 +44,18 @@ OptionalNewPassword = Annotated[Optional[str], AfterValidator(_optional_new_pass
 # users.firstname / users.lastname are VARCHAR(50); guardians' names are VARCHAR(100).
 PersonName = Annotated[str, AfterValidator(_name(50))]
 GuardianName = Annotated[str, AfterValidator(_name(100))]
+
+
+_login_email = TypeAdapter(LoginEmail)
+
+
+def validate_login_email(value) -> str:
+    """Check an email with the same rules as the sign-in forms (endpoints that take a raw dict).
+
+    An address the login form rejects (e.g. a reserved domain such as .test) would create an
+    account nobody can ever sign in to.
+    """
+    try:
+        return str(_login_email.validate_python(value))
+    except ValidationError as exc:
+        raise ValueError("Enter a valid e-mail address") from exc

@@ -38,6 +38,16 @@ docker compose run --rm backend python -m app.cli.admin create
 
 The command prompts for a username and password without placing the password in shell history. Existing legacy plaintext admin passwords are upgraded to hashes after a successful login; rotate them and confirm all admin rows use hashes as part of production cutover.
 
+### Main administrator forgot the password
+
+No shell is needed (works on the Render free tier):
+
+1. On the host (Render → Environment), add `RESET_MAIN_ADMIN_PASSWORD` with the new password (12 to 72 characters). Saving restarts the service.
+2. At startup the main administrator (the account no other admin created) gets that password, is reactivated, and every open session is signed out. The log shows `Main administrator recovery: password of '<user>' was reset`.
+3. Sign in, then **delete `RESET_MAIN_ADMIN_PASSWORD`**. While it is set, restarts change nothing (the log says the password already matches), but the password stays readable in the host settings.
+
+If several main administrator accounts exist, the one named by `INITIAL_ADMIN_USERNAME` is reset; otherwise nothing changes and the log lists the accounts. An invalid value is ignored with a log line and never prevents the API from starting. Locally: `docker compose exec -e RESET_MAIN_ADMIN_PASSWORD=... backend python -m app.cli.admin seed`.
+
 ## Operations
 
 ```sh

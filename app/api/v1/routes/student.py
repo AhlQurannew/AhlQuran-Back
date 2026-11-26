@@ -1206,6 +1206,16 @@ async def get_student_attendance(
             detail=f"Student with ID {student_id} not found or not accessible"
         )
 
+    # Students and guardians share their school's id with every other family: limit them to
+    # their own record / their own children, or they could read any classmate's attendance.
+    role = getattr(current_user, "role", None)
+    if role == UserRoleEnum.STUDENT and student.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail=f"Student with ID {student_id} not found or not accessible")
+    if role == UserRoleEnum.GUARDIAN:
+        guardian_user_id = await db.scalar(select(Guardian.user_id).where(Guardian.id == student.guardian_id))
+        if student.guardian_id is None or guardian_user_id != current_user.id:
+            raise HTTPException(status_code=404, detail=f"Student with ID {student_id} not found or not accessible")
+
     await _ensure_teacher_owns_lecture(current_user, lecture_id, db)
     if not await student_in_lecture_or_its_history(db, student_id, lecture_id, president_id):
         raise HTTPException(status_code=404, detail="Student is not enrolled in this lecture")

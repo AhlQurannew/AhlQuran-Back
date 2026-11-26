@@ -29,6 +29,21 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
     return hmac.compare_digest(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
 
+_DUMMY_PASSWORD_HASH = pwd_context.hash("unused-account-timing-equalizer")
+
+
+def burn_password_check(plain_password: str) -> None:
+    """Spend the same bcrypt time as a real check when the account does not exist.
+
+    Without it, an unknown email answers instantly and a known one after bcrypt, which lets
+    anyone list the registered addresses by timing the login endpoints.
+    """
+    try:
+        pwd_context.verify(plain_password, _DUMMY_PASSWORD_HASH)
+    except (TypeError, ValueError):
+        pass
+
+
 def is_password_hashed(password: str) -> bool:
     """Check if a password is already properly hashed with bcrypt"""
     return password.startswith('$2b$') or password.startswith('$2a$') or password.startswith('$2y$')

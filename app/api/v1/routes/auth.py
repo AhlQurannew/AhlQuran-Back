@@ -21,6 +21,7 @@ from app.core.security import (
     decode_token,
     get_password_hash,
     is_password_hashed,
+    burn_password_check,
     upgrade_password_if_needed,
     verify_password,
 )
@@ -162,6 +163,7 @@ async def president_login(
     user = result.scalar_one_or_none()
     
     if not user:
+        burn_password_check(form_data.password)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -247,9 +249,10 @@ async def supervisor_login(
     user = result.scalar_one_or_none()
 
     if not user:
+        burn_password_check(form_data.password)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="there is no supervisor by this credentials",
+            detail="Invalid email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -257,7 +260,7 @@ async def supervisor_login(
     if not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='wrong email or password',
+            detail="Invalid email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -338,6 +341,7 @@ async def teacher_login(
     user = result.scalar_one_or_none()
 
     if not user:
+        burn_password_check(form_data.password)
         logger.info("Teacher login rejected: no matching teacher account")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -432,6 +436,8 @@ async def student_login(
 ):
     result = await db.execute(select(User).where(func.lower(User.email) == form_data.email.strip().lower(), User.role == UserRoleEnum.STUDENT))
     user = result.scalar_one_or_none()
+    if user is None:
+        burn_password_check(form_data.password)
     if user is None or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password", headers={"WWW-Authenticate": "Bearer"})
     await upgrade_password_if_needed(db, user, form_data.password)
@@ -472,6 +478,7 @@ async def guardian_login(
     user = result.scalar_one_or_none()
 
     if not user:
+        burn_password_check(form_data.password)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -570,6 +577,7 @@ async def admin_login(
     admin = result.scalar_one_or_none()
     
     if not admin:
+        burn_password_check(form_data.password)
         logger.warning("Admin login rejected: account not found")
         if settings.APP_ENV == "development":
             logger.warning("Unmatched admin login identifier: %r", login_user)
@@ -968,7 +976,11 @@ async def update_account_profile(
         if set(values) - {"username"}:
             raise HTTPException(status_code=403, detail="Only the administrator username can be changed here")
         if "username" in values:
-            duplicate = await db.execute(select(Admin.id).where(Admin.user == values["username"], Admin.id != account.id))
+            # Sign-in matches usernames case-insensitively: "Admin" next to "admin" would make the
+            # login lookup ambiguous and lock the other administrator out, so compare the same way.
+            duplicate = await db.execute(
+                select(Admin.id).where(func.lower(Admin.user) == values["username"].lower(), Admin.id != account.id).limit(1)
+            )
             if duplicate.scalar_one_or_none() is not None:
                 raise HTTPException(status_code=409, detail="Username is already in use")
             account.user = values["username"].strip()
@@ -1011,6 +1023,9 @@ async def update_account_preferences(
         raise HTTPException(status_code=422, detail="At least one preference is required")
     if "timezone" in values and values["timezone"] not in available_timezones():
         raise HTTPException(status_code=422, detail="Unknown timezone")
+    is_main_admin = isinstance(account, Admin) and not account.is_inspector and account.created_by_id is None
+    if is_main_admin and values.get("honorific") == "female":
+        raise HTTPException(status_code=422, detail="The main administrator is addressed as « سيدي »")
     preference = await _get_account_preferences(db, account)
     if preference is None:
         preference = AccountPreference(user_id=account.id) if isinstance(account, User) else AccountPreference(admin_id=account.id)

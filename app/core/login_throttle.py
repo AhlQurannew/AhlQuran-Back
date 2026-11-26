@@ -55,13 +55,32 @@ class LoginThrottle:
         self._failures.pop(key, None)
 
 
+MAX_REGISTRATIONS = 5
+REGISTRATION_WINDOW_SECONDS = 60 * 60
+
+
 class LoginThrottleMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, throttle: LoginThrottle | None = None):
+    def __init__(self, app, throttle: LoginThrottle | None = None, registration_throttle: LoginThrottle | None = None):
         super().__init__(app)
         self.throttle = throttle or LoginThrottle()
+        # Public sign-up: every attempt counts (successful ones create pending accounts the admin must sort).
+        self.registration_throttle = registration_throttle or LoginThrottle(
+            max_failures=MAX_REGISTRATIONS, window=REGISTRATION_WINDOW_SECONDS
+        )
 
     async def dispatch(self, request: Request, call_next):
-        path = request.url.path
+        path = request.url.path.rstrip("/")
+        if request.method == "POST" and "/auth/" in path and path.endswith("/register"):
+            key = f"{client_ip(request)}|register"
+            wait = self.registration_throttle.retry_after(key)
+            if wait:
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Too many registration attempts. Try again later."},
+                    headers={"Retry-After": str(wait)},
+                )
+            self.registration_throttle.failure(key)
+            return await call_next(request)
         if request.method != "POST" or "/auth/" not in path or not path.endswith("/login"):
             return await call_next(request)
         key = f"{client_ip(request)}|{path}"

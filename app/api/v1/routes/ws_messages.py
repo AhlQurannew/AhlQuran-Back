@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.account_lifecycle import ensure_school_active
 from app.core.multi_tenancy import get_president_id_for_user as resolve_president_id
 from app.core.security import decode_token
 from app.db.session import SessionLocal as async_session_factory
@@ -36,6 +37,7 @@ async def get_president_id_for_user(user, db: AsyncSession, school_id: int | Non
 
 
 STAFF_ROLES = {"PRESIDENT", "CHIEF_SUPERVISOR", "SUPERVISOR", "TEACHER"}
+MAX_MESSAGE_LENGTH = 5000  # matches MessageCreate.message
 
 
 async def authenticate_ws_token(token: str, db: AsyncSession) -> User | Admin | None:
@@ -60,6 +62,11 @@ async def authenticate_ws_token(token: str, db: AsyncSession) -> User | Admin | 
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if user is None or not user.is_active or payload.get("ver", 0) != user.auth_version:
+        return None
+    try:
+        # A suspended school is refused on every REST call; the chat socket must refuse it too.
+        await ensure_school_active(db, user)
+    except HTTPException:
         return None
     return user
 
@@ -198,8 +205,13 @@ async def handle_websocket_connection(websocket: WebSocket, token: str, school_i
                         await broadcast_to_group(president_id, {"type": "delete", "id": msg_id})
                     continue
 
-                text = (payload.get("message") or "").strip()
+                text = payload.get("message")
+                text = text.strip() if isinstance(text, str) else ""
                 if not text:
+                    continue
+                if len(text) > MAX_MESSAGE_LENGTH:
+                    # Same limit as the REST endpoint: without it one socket could store megabytes per message.
+                    await websocket.send_text(json.dumps({"type": "error", "detail": "Message is too long"}))
                     continue
                 role = _sender_role(account)
                 if role is None:

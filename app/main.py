@@ -40,8 +40,9 @@ app = FastAPI(
     default_response_class=ORJSONResponse
 )
 
-# Only this project's Vercel deployments (production + previews), not every *.vercel.app site.
-VERCEL_ORIGIN = re.compile(r"^https://ahl-el-quran[a-z0-9-]*\.vercel\.app$")
+# Only the production Vercel domain. A prefix wildcard ("ahl-el-quran*") also matched projects
+# anyone can create on Vercel (e.g. ahl-el-quran-evil.vercel.app); list preview URLs in CORS_ORIGINS.
+VERCEL_ORIGIN = re.compile(r"^https://ahl-el-quran\.vercel\.app$")
 
 
 @app.exception_handler(Exception)

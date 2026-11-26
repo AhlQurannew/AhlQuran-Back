@@ -1,4 +1,6 @@
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, String, UniqueConstraint
+from datetime import datetime
+
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -21,3 +23,6 @@ class AccountPreference(Base):
     honorific: Mapped[str | None] = mapped_column(String(10), nullable=True)
     # Avatar path relative to UPLOAD_DIR (see app/services/profile_images.py)
     profile_image: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Last time the account opened the announcements / chat pages (red dots in the sidebar).
+    announcements_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    messages_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

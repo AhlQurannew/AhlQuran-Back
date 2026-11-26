@@ -18,6 +18,7 @@ from .inspectors import inspectorRouter
 from .admins import adminAccountRouter
 from .backup import backupRouter
 from .accounts import accountRouter
+from .announcements import announcementRouter, notificationRouter
 from .ws_messages import ws_router
 
 def register_routes(app):
@@ -40,6 +41,8 @@ def register_routes(app):
         (siteRouter, "/site", ["Site"]),
         (specialityRouter, "/specialities", ["Specialities"]),
         (examRouter, "/exams", ["Exams"]),
+        (announcementRouter, "/announcements", ["Announcements"]),
+        (notificationRouter, "/notifications", ["Notifications"]),
     ]
 
     for router, prefix, tags in routes:

@@ -21,8 +21,11 @@ from app.models.login_slide import LoginSlide
 from app.models.teacher_note import TeacherNote
 from app.models.speciality import Speciality, SpecialityLecture
 from app.models.exam import Exam, ExamResult
+from app.models.announcement import Announcement, AnnouncementAttachment
 
 __all__ = [
+    "Announcement",
+    "AnnouncementAttachment",
     "User",
     "UserRoleEnum",
     "President",
